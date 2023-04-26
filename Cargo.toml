@@ -1,0 +1,31 @@
+[package]
+name = "volepsi"
+authors = ["Jiang Jianlin jianliin96@gmail.com"]
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+network = { path = "network" }
+csv = "1.1.6"
+serde = { version = "1.0", features = ["derive"] }
+rand = { version = "0.8.5", features = ["std_rng"] }
+rayon = "1.6.1"
+tokio = { version = "1.27.0", features = ["rt", "net", "sync", "macros", "time", "rt-multi-thread"] }
+async-trait = "0.1.68"
+bytes = "1.4.0"
+bincode = "1.3.3"
+log = "0.4.17"
+env_logger = "0.10.0"
+futures = "0.3.28"
+num-bigint = "0.4.3"
+libc = "0.2"
+clap = { version = "4.1.6", features = [ "derive"] }
+lazy_static = "1.4.0"
+
+[features]
+
+[build-dependencies]
+cc = "1.0"
+cmake = "0.1.49"
