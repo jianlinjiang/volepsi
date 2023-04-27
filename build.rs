@@ -2,7 +2,7 @@ use std::env;
 use std::path::Path;
 fn main() {
     let local_linklib_path = Path::new("/usr/local/lib");
-    // build slient vole
+    // build silent vole
     let path = env::current_dir().unwrap();
     let mut rs_vole_cpp = path.clone();
     rs_vole_cpp.push("vole_binding/rvole.cpp");
