@@ -1,6 +1,10 @@
+use core::panic;
+
 use super::block::{gf128_inv, Block, ONE_BLOCK, ZERO_BLOCK};
 use super::matrix::Matrix;
-
+use super::utils::{div_ceil, round_up_to};
+use log::{error, info};
+use rand::Rng;
 pub fn gf128_matrix_inv(mut mtx: Matrix<Block>) -> Matrix<Block> {
     assert_eq!(mtx.rows(), mtx.cols());
 
@@ -78,11 +82,11 @@ struct PaxosParam {
 }
 
 impl PaxosParam {
-    pub fn init(num_items: usize, weight: usize, ssp: usize) -> PaxosParam {
+    pub fn init(items_num: usize, weight: usize, ssp: usize) -> PaxosParam {
         if weight < 2 {
             panic!("weight must be 2 or greater");
         }
-        let log_n = (num_items as f64).log2();
+        let log_n = (items_num as f64).log2();
         let mut dense_size = 0;
         let mut sparse_size = 0;
         let mut g: usize = 0;
@@ -94,7 +98,7 @@ impl PaxosParam {
 
             g = (ssp as f64 / lambda_vs_gap + 1.9).ceil() as usize;
             dense_size = g;
-            sparse_size = 2 * num_items;
+            sparse_size = 2 * items_num;
         } else {
             let mut ee: f64 = 0.0;
             if weight == 3 {
@@ -109,14 +113,15 @@ impl PaxosParam {
             let log_lambda_vs_e = 0.555 * log_n + 0.093 * log_w.powi(3) - 1.01 * log_w.powi(2)
                 + 2.925 * log_w
                 - 0.133;
-
-            let lambda_vs_e = log_lambda_vs_e.powi(2);
+            // let lambda_vs_e = log_lambda_vs_e.powi(2);
+            let lambda_vs_e = (2.0_f64).powf(log_lambda_vs_e);
             let b = -9.2 - lambda_vs_e * ee;
             let e = (ssp as f64 - b) / lambda_vs_e;
-            g = ((ssp as f64) / ((weight as f64 - 2.0) * (e * num_items as f64))).floor() as usize;
+            g = ((ssp as f64) / ((weight as f64 - 2.0) * (e * items_num as f64).log2())).floor()
+                as usize;
 
             dense_size = g;
-            sparse_size = (num_items as f64 * e).floor() as usize;
+            sparse_size = (items_num as f64 * e).floor() as usize;
         }
 
         PaxosParam {
@@ -129,18 +134,44 @@ impl PaxosParam {
     }
 }
 
+#[derive(Clone, Debug)]
+struct Paxos {
+    items_num: usize,
+    params: PaxosParam,
+}
+
+impl Paxos {
+    /// solve/encode
+    pub fn solve<T: Copy + PartialEq, R: Rng>(
+        &self,
+        inputs: &Vec<Block>,
+        values: Vec<Block>,
+        prng: Option<R>,
+    ) {
+        if self.items_num != inputs.len() {
+            panic!("items and input length doesn't match!")
+        }
+        let val = (self.params.sparse_size + 1) as f64;
+        let bit_length = round_up_to(val.log2().ceil() as u64, 8);
+    }
+
+    pub fn init<T: Copy + PartialEq>(items_num: usize, weight: usize, ssp: usize, seed: Block) {
+        let params = PaxosParam::init(items_num, weight, ssp);
+        if params.sparse_size + params.dense_size < items_num {
+            panic!("params error");
+        }
+    }
+}
 
 /// convert row items to sparse vector with length m'
 #[derive(Clone)]
-struct PaxosHash {
-    
-}
+struct PaxosHash {}
 
 #[cfg(test)]
 mod tests {
     #![allow(arithmetic_overflow)]
-    use super::*;
     use super::super::block::ZERO_BLOCK;
+    use super::*;
     use rand::{thread_rng, RngCore};
     use std::time::{Duration, Instant};
     #[test]
@@ -154,7 +185,7 @@ mod tests {
             }
         }
         let inv = gf128_matrix_inv(mtx.clone());
-        let I = gf128_matrix_mul(&inv, &mtx);
+        let I: Matrix<Block> = gf128_matrix_mul(&inv, &mtx);
         for i in 0..n {
             assert_eq!(I[(i, i)], *ONE_BLOCK);
             for j in 0..n {
@@ -163,5 +194,11 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn paxos_params_test() {
+        let param = PaxosParam::init(1 << 20, 3, 40);
+        println!("{:?}", param);
     }
 }

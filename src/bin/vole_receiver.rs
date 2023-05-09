@@ -1,9 +1,9 @@
 use env_logger::Env;
+use log::info;
 use rand::thread_rng;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::time::Instant;
 use volepsi::vole::silent_vole_receiver::SilentVoleReceiver;
-use std::time::{Instant};
-use log::info;
 
 #[tokio::main]
 async fn main() {

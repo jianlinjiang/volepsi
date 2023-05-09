@@ -6,13 +6,7 @@ use std::arch::x86_64::*;
 use std::cmp::PartialEq;
 use std::ops::{Add, BitAnd, BitOr, BitOrAssign, BitXor, BitXorAssign, Not, Sub};
 #[derive(Copy, Clone, Debug)]
-pub struct Block(__m128i);
-
-// impl fmt::Display for Block {
-//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-//         write!(f, "({:16x}, {:16x})", self.0.1, self.0.0)
-//     }
-// }
+pub struct Block(pub __m128i);
 
 lazy_static! {
     pub static ref ZERO_BLOCK: Block = Block::from_i64(0, 0);
