@@ -9,7 +9,7 @@ pub struct Matrix<T> {
 
 impl<T> Matrix<T>
 where
-    T: Clone + PartialEq,
+    T: PartialEq + Copy,
 {
     pub fn new(rows: usize, columns: usize, v: T) -> Matrix<T> {
         let capacity = rows * columns;
@@ -39,9 +39,17 @@ where
         self.stride = cols;
         self.storage.resize(self.capacity as usize, padding);
     }
+
+    pub fn data(&self) -> &[T] {
+        &self.storage
+    }
+
+    pub fn mut_data(&mut self) -> &mut [T] {
+        &mut self.storage
+    }
 }
 
-impl<T: PartialEq + Clone> PartialEq for Matrix<T> {
+impl<T: PartialEq + Copy> PartialEq for Matrix<T> {
     fn eq(&self, other: &Matrix<T>) -> bool {
         if self.rows() != other.rows() || self.cols() != other.cols() {
             return false;

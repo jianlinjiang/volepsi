@@ -1,10 +1,53 @@
-use core::panic;
-
 use super::block::{gf128_inv, Block, ONE_BLOCK, ZERO_BLOCK};
 use super::matrix::Matrix;
+use super::prng::Prng;
 use super::utils::{div_ceil, round_up_to};
+use core::panic;
 use log::{error, info};
 use rand::Rng;
+use std::ffi::c_void;
+use super::weight_data::WeightData;
+#[link(name = "rcrypto")]
+extern "C" {
+    pub fn new_paxos_hash(bit_length: usize) -> *const c_void;
+    pub fn delete_paxos_hash(pointer: *const c_void, bit_length: usize);
+    pub fn init_paxos_hash(
+        pointer: *const c_void,
+        seed: *const c_void,
+        weight: usize,
+        paxos_size: usize,
+        bit_length: usize,
+    );
+    pub fn build_row_raw(
+        pointer: *const c_void,
+        hash: *const c_void,
+        row: *mut c_void,
+        bit_length: usize,
+    );
+    pub fn build_row32_raw(
+        pointer: *const c_void,
+        hash: *const c_void,
+        row: *mut c_void,
+        bit_length: usize,
+    );
+
+    pub fn hash_build_row1_raw(
+        pointer: *const c_void,
+        input: *const c_void,
+        row: *mut c_void,
+        hash: *mut c_void,
+        bit_length: usize,
+    );
+
+    pub fn hash_build_row32_raw(
+        pointer: *const c_void,
+        input: *const c_void,
+        row: *mut c_void,
+        hash: *mut c_void,
+        bit_length: usize,
+    );
+}
+
 pub fn gf128_matrix_inv(mut mtx: Matrix<Block>) -> Matrix<Block> {
     assert_eq!(mtx.rows(), mtx.cols());
 
@@ -137,17 +180,24 @@ impl PaxosParam {
 #[derive(Clone, Debug)]
 struct Paxos {
     items_num: usize,
+    seed: Block,
     params: PaxosParam,
+    hasher: PaxosHash,
+    dense: Vec<Block>,
+    rows: Matrix<u64>,
+    cols: Vec<Vec<u64>>,
+    col_backing: Vec<u64>,
+    weight_sets: Option<WeightData>
 }
 
-impl Paxos {
+impl Paxos
+{
+    pub fn size(&self) -> usize {
+        self.params.sparse_size + self.params.dense_size
+    }
+
     /// solve/encode
-    pub fn solve<T: Copy + PartialEq, R: Rng>(
-        &self,
-        inputs: &Vec<Block>,
-        values: Vec<Block>,
-        prng: Option<R>,
-    ) {
+    pub fn solve<R: Rng>(&self, inputs: &Vec<Block>, values: Vec<Block>, prng: Option<R>) {
         if self.items_num != inputs.len() {
             panic!("items and input length doesn't match!")
         }
@@ -155,25 +205,138 @@ impl Paxos {
         let bit_length = round_up_to(val.log2().ceil() as u64, 8);
     }
 
-    pub fn init<T: Copy + PartialEq>(items_num: usize, weight: usize, ssp: usize, seed: Block) {
+    pub fn new(items_num: usize, weight: usize, ssp: usize, seed: Block) -> Paxos {
         let params = PaxosParam::init(items_num, weight, ssp);
         if params.sparse_size + params.dense_size < items_num {
             panic!("params error");
         }
+        let hasher = PaxosHash::new::<u64>(seed, weight, params.sparse_size);
+        Paxos {
+            items_num,
+            seed,
+            params,
+            hasher,
+            dense: Vec::new(),
+            rows: Matrix::new(0, 0, 0),
+            cols: Vec::new(),
+            col_backing: Vec::new(),
+            weight_sets: None
+        }
     }
+
+    pub fn encode(&self, values: &Vec<Block>, output: &mut Vec<Block>, prng: Option<Prng>) {
+        if output.len() != self.size() {
+            panic!("output size doesn't match");
+        }
+        let mut main_rows: Vec<u64> = Vec::with_capacity(self.items_num);
+        let mut main_cols: Vec<u64> = Vec::with_capacity(self.items_num);
+
+        let mut gap_rows: Vec<[u64; 2]>;
+    }
+
+    // pub fn triangulate(&self, )
 }
 
 /// convert row items to sparse vector with length m'
-#[derive(Clone)]
-struct PaxosHash {}
+#[derive(Clone, Debug)]
+struct PaxosHash {
+    weight: usize,
+    sparse_size: usize,
+    idx_size: usize,
+    pointer: *const c_void,
+    idbit_length: usize,
+}
+
+impl PaxosHash {
+    pub fn new<T>(seed: Block, weight: usize, paxos_size: usize) -> PaxosHash {
+        unsafe {
+            let idbit_length = std::mem::size_of::<T>() * 8;
+            let bit_length = round_up_to((paxos_size as f64).log2().ceil() as u64, 8) as usize;
+            assert_eq!(bit_length, idbit_length);
+
+            let idx_size = bit_length / 8;
+
+            let pointer: *const c_void = new_paxos_hash(bit_length);
+            init_paxos_hash(
+                pointer,
+                &seed as *const Block as *const c_void,
+                weight,
+                paxos_size,
+                idbit_length,
+            );
+            PaxosHash {
+                weight,
+                sparse_size: paxos_size,
+                idx_size,
+                pointer,
+                idbit_length,
+            }
+        }
+    }
+
+    pub fn build_row<T>(&self, hash: Block, row: &mut [T]) {
+        unsafe {
+            build_row_raw(
+                self.pointer,
+                &hash as *const Block as *const c_void,
+                row.as_mut_ptr() as *mut c_void,
+                self.idbit_length,
+            );
+        }
+    }
+
+    pub fn build_row32<T>(&self, hash: &[Block], row: &mut [T]) {
+        unsafe {
+            build_row32_raw(
+                self.pointer,
+                hash.as_ptr() as *const c_void,
+                row.as_mut_ptr() as *mut c_void,
+                self.idbit_length,
+            );
+        }
+    }
+
+    pub fn hash_build_row1<T>(&self, input: &[Block], rows: &mut [T], hash: &mut [Block]) {
+        unsafe {
+            hash_build_row1_raw(
+                self.pointer,
+                input.as_ptr() as *const c_void,
+                rows.as_mut_ptr() as *mut c_void,
+                hash.as_mut_ptr() as *mut c_void,
+                self.idbit_length,
+            );
+        }
+    }
+
+    pub fn hash_build_row32<T>(&self, input: &[Block], rows: &mut [T], hash: &mut [Block]) {
+        unsafe {
+            hash_build_row32_raw(
+                self.pointer,
+                input.as_ptr() as *const c_void,
+                rows.as_mut_ptr() as *mut c_void,
+                hash.as_mut_ptr() as *mut c_void,
+                self.idbit_length,
+            );
+        }
+    }
+}
+
+impl Drop for PaxosHash {
+    fn drop(&mut self) {
+        unsafe {
+            delete_paxos_hash(self.pointer, self.idbit_length);
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
     #![allow(arithmetic_overflow)]
     use super::super::block::ZERO_BLOCK;
+    use super::super::matrix::Matrix;
+    use super::super::prng::Prng;
     use super::*;
-    use rand::{thread_rng, RngCore};
-    use std::time::{Duration, Instant};
+    use rand::thread_rng;
     #[test]
     fn matrix_inv_test() {
         let mut rng = thread_rng();
@@ -200,5 +363,67 @@ mod tests {
     fn paxos_params_test() {
         let param = PaxosParam::init(1 << 20, 3, 40);
         println!("{:?}", param);
+    }
+
+    #[test]
+    fn paxos_buildrow_test() {
+        let n = 1 << 10;
+        let t = 1 << 4;
+        let s = 0; // seed
+        let h = PaxosHash::new::<u16>(Block::from_i64(0, s), 3, n);
+        let prng = Prng::new(Block::from_i64(1, s));
+        let exp: [[u16; 3]; 32] = [
+            [858, 751, 414],
+            [677, 590, 375],
+            [857, 240, 0],
+            [18, 373, 879],
+            [990, 62, 458],
+            [894, 667, 301],
+            [1023, 438, 301],
+            [532, 815, 202],
+            [64, 507, 82],
+            [664, 739, 158],
+            [4, 523, 573],
+            [719, 282, 86],
+            [156, 396, 473],
+            [810, 916, 850],
+            [959, 1017, 449],
+            [3, 841, 546],
+            [703, 146, 19],
+            [935, 983, 830],
+            [689, 804, 550],
+            [237, 661, 393],
+            [25, 817, 387],
+            [112, 531, 45],
+            [799, 747, 158],
+            [986, 444, 949],
+            [916, 954, 410],
+            [736, 219, 732],
+            [111, 628, 750],
+            [272, 627, 160],
+            [191, 610, 628],
+            [1018, 213, 894],
+            [1, 609, 948],
+            [570, 60, 896],
+        ];
+        // let mut hash: [Block; 32] = [Block::from_i64(0, 0); 32];
+        let mut rows = Matrix::<u16>::new(32, 3, 0);
+        for tt in 0..t {
+            let hash = prng.get_blocks(32);
+            h.build_row32(&hash, rows.mut_data());
+
+            for i in 0..32 {
+                let mut rr: [u16; 3] = [0; 3];
+                h.build_row(hash[i], &mut rr);
+
+                for j in 0..3 {
+                    assert_eq!(rows[(i, j)], rr[j]);
+
+                    if tt == 0 {
+                        assert_eq!(rows[(i, j)], exp[i][j]);
+                    }
+                }
+            }
+        }
     }
 }

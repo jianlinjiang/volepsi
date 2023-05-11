@@ -1,11 +1,7 @@
 use super::block::Block;
-#[cfg(target_arch = "x86")]
-use std::arch::x86::*;
-#[cfg(target_arch = "x86_64")]
-use std::arch::x86_64::*;
 use std::ffi::c_void;
 
-#[link(name = "raes")]
+#[link(name = "rcrypto")]
 extern "C" {
     pub fn new_aes() -> *const c_void;
     pub fn set_key(aes: *const c_void, key: *const c_void);
@@ -19,7 +15,7 @@ extern "C" {
 }
 
 #[derive(Clone, Debug)]
-struct Aes {
+pub struct Aes {
     aes_pointer: *const c_void,
     key: Block,
 }
@@ -85,7 +81,6 @@ mod tests {
     #![allow(arithmetic_overflow)]
     use super::*;
     use rand::{thread_rng, RngCore};
-    use std::time::{Duration, Instant};
     #[test]
     fn aes_setkey() {
         let mut rng = thread_rng();
