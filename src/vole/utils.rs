@@ -1,7 +1,7 @@
-pub fn div_ceil(val: u64, d: u64) -> u64 {
+pub fn div_ceil(val: usize, d: usize) -> usize {
     (val + d - 1) / d
 }
 
-pub fn round_up_to(val: u64, step: u64) -> u64 {
+pub fn round_up_to(val: usize, step: usize) -> usize {
     div_ceil(val, step) * step
 }

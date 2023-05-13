@@ -3,7 +3,7 @@ use rand::Rng;
 use std::arch::x86::*;
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
-use std::cmp::PartialEq;
+use std::cmp::{Ordering, PartialEq};
 use std::ops::{Add, BitAnd, BitOr, BitOrAssign, BitXor, BitXorAssign, Not, Sub};
 #[derive(Copy, Clone, Debug)]
 pub struct Block(pub __m128i);
@@ -79,6 +79,12 @@ impl Block {
     pub fn rand<R: Rng>(rng: &mut R) -> Self {
         Block::from_i64(rng.next_u64() as i64, rng.next_u64() as i64)
     }
+
+    pub fn clear(&mut self) {
+        unsafe {
+            self.0 = _mm_setzero_si128();
+        }
+    }
 }
 
 impl BitXor for Block {
@@ -146,6 +152,40 @@ impl PartialEq for Block {
     }
 }
 
+impl Eq for Block {}
+
+impl PartialOrd for Block {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        unsafe {
+            let lhsa = &self.0 as *const __m128i as *const u64;
+            let rhsa = &other.0 as *const __m128i as *const u64;
+            if *(lhsa.offset(1)) < *(rhsa.offset(1)) {
+                Some(Ordering::Less)
+            } else if *(lhsa.offset(1)) == *(rhsa.offset(1)) && *lhsa < *rhsa {
+                Some(Ordering::Less)
+            } else {
+                Some(Ordering::Greater)
+            }
+        }
+    }
+}
+
+impl Ord for Block {
+    fn cmp(&self, other: &Self) -> Ordering {
+        unsafe {
+            let lhsa = &self.0 as *const __m128i as *const u64;
+            let rhsa = &other.0 as *const __m128i as *const u64;
+            if *(lhsa.offset(1)) < *(rhsa.offset(1)) {
+                Ordering::Less
+            } else if *(lhsa.offset(1)) == *(rhsa.offset(1)) && *lhsa < *rhsa {
+                Ordering::Less
+            } else {
+                Ordering::Greater
+            }
+        }
+    }
+}
+
 pub fn gf128_inv(x: &Block) -> Block {
     let mut a = *x;
     let mut result = *ZERO_BLOCK;
@@ -180,6 +220,20 @@ mod tests {
         for i in 0..10000 {
             let a = Block::rand(&mut rng);
             let b = gf128_inv(&a);
+            let c = a.gf128_mul_reduce(&b);
+            assert_eq!(c, *ONE_BLOCK);
+        }
+    }
+
+    #[test]
+    fn block_add_test() {
+        let mut rng = thread_rng();
+        for i in 0..10000 {
+            let a = Block::rand(&mut rng);
+            let b = Block::rand(&mut rng);
+            let c = a + b;
+            let d = a ^ b;
+            assert_eq!(c, d);
         }
     }
 }

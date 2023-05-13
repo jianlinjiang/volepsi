@@ -1,12 +1,18 @@
+use crate::vole::weight_data::WeightNode;
+
 use super::block::{gf128_inv, Block, ONE_BLOCK, ZERO_BLOCK};
 use super::matrix::Matrix;
 use super::prng::Prng;
-use super::utils::{div_ceil, round_up_to};
+use super::utils::round_up_to;
+use super::weight_data::WeightData;
 use core::panic;
 use log::{error, info};
 use rand::Rng;
+use std::collections::{BTreeSet, HashSet};
 use std::ffi::c_void;
-use super::weight_data::WeightData;
+
+const PAXOS_BUILD_ROW_SIZE: usize = 32;
+
 #[link(name = "rcrypto")]
 extern "C" {
     pub fn new_paxos_hash(bit_length: usize) -> *const c_void;
@@ -97,7 +103,6 @@ pub fn gf128_matrix_inv(mut mtx: Matrix<Block>) -> Matrix<Block> {
             }
         }
     }
-
     inv
 }
 
@@ -178,20 +183,32 @@ impl PaxosParam {
 }
 
 #[derive(Clone, Debug)]
+struct FCInv {
+    pub mtx: Vec<Vec<usize>>,
+}
+
+impl FCInv {
+    pub fn new(n: usize) -> FCInv {
+        FCInv {
+            mtx: vec![vec![]; n],
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 struct Paxos {
     items_num: usize,
     seed: Block,
     params: PaxosParam,
     hasher: PaxosHash,
     dense: Vec<Block>,
-    rows: Matrix<u64>,
-    cols: Vec<Vec<u64>>,
-    col_backing: Vec<u64>,
-    weight_sets: Option<WeightData>
+    rows: Matrix<usize>,
+    cols: Vec<Vec<usize>>,
+    col_backing: Vec<usize>,
+    weight_sets: Option<WeightData>,
 }
 
-impl Paxos
-{
+impl Paxos {
     pub fn size(&self) -> usize {
         self.params.sparse_size + self.params.dense_size
     }
@@ -202,7 +219,7 @@ impl Paxos
             panic!("items and input length doesn't match!")
         }
         let val = (self.params.sparse_size + 1) as f64;
-        let bit_length = round_up_to(val.log2().ceil() as u64, 8);
+        let bit_length = round_up_to(val.log2().ceil() as usize, 8);
     }
 
     pub fn new(items_num: usize, weight: usize, ssp: usize, seed: Block) -> Paxos {
@@ -210,31 +227,422 @@ impl Paxos
         if params.sparse_size + params.dense_size < items_num {
             panic!("params error");
         }
-        let hasher = PaxosHash::new::<u64>(seed, weight, params.sparse_size);
+        let hasher = PaxosHash::new::<usize>(seed, weight, params.sparse_size);
+        let sparse_size = params.sparse_size;
         Paxos {
             items_num,
             seed,
             params,
             hasher,
-            dense: Vec::new(),
-            rows: Matrix::new(0, 0, 0),
-            cols: Vec::new(),
-            col_backing: Vec::new(),
-            weight_sets: None
+            dense: vec![Block::from_i64(0, 0); items_num],
+            rows: Matrix::new(items_num, weight, 0),
+            cols: vec![vec![]; sparse_size],
+            col_backing: vec![0; items_num * weight],
+            weight_sets: None,
         }
     }
 
-    pub fn encode(&self, values: &Vec<Block>, output: &mut Vec<Block>, prng: Option<Prng>) {
+    pub fn set_input(&mut self, inputs: &Vec<Block>) {
+        assert_eq!(self.items_num, inputs.len());
+
+        let mut col_weights = vec![0; self.params.sparse_size];
+
+        // check inputs is unique, TODO: Remove when release build
+        {
+            let mut input_set: BTreeSet<Block> = BTreeSet::new();
+            for i in inputs {
+                assert!(input_set.insert(*i))
+            }
+        }
+
+        let main = inputs.len() / PAXOS_BUILD_ROW_SIZE * PAXOS_BUILD_ROW_SIZE;
+
+        let mut i = 0;
+        while i < main {
+            let rr = self.rows.mut_row_data(i, PAXOS_BUILD_ROW_SIZE);
+            let hash = &mut self.dense[i..i + PAXOS_BUILD_ROW_SIZE];
+            self.hasher
+                .hash_build_row32(&inputs[i..i + PAXOS_BUILD_ROW_SIZE], rr, hash);
+
+            rr.iter().for_each(|c| {
+                col_weights[*c] += 1;
+            });
+
+            i += PAXOS_BUILD_ROW_SIZE;
+        }
+
+        while i < self.items_num {
+            self.hasher.hash_build_row1(
+                &inputs[i..i + 1],
+                self.rows.mut_row_data(i, 1),
+                &mut self.dense[i..i + 1],
+            );
+            self.rows.row_data(i, 1).iter().for_each(|c| {
+                col_weights[*c] += 1;
+            });
+            i += 1;
+        }
+        // rebuild columns
+        self.rebuild_columns(&col_weights, self.params.weight * self.items_num);
+
+        assert!(self.weight_sets.is_none());
+        self.weight_sets = Some(WeightData::init(&col_weights));
+    }
+
+    pub fn encode(&mut self, values: &Vec<Block>, output: &mut Vec<Block>, prng: Option<Prng>) {
         if output.len() != self.size() {
             panic!("output size doesn't match");
         }
-        let mut main_rows: Vec<u64> = Vec::with_capacity(self.items_num);
-        let mut main_cols: Vec<u64> = Vec::with_capacity(self.items_num);
+        let mut main_rows: Vec<usize> = Vec::with_capacity(self.items_num);
+        let mut main_cols: Vec<usize> = Vec::with_capacity(self.items_num);
 
-        let mut gap_rows: Vec<[u64; 2]>;
+        let mut gap_rows: Vec<[usize; 2]> = Vec::new();
+
+        self.triangulate(&mut main_rows, &mut main_cols, &mut gap_rows);
+        output.fill(*ZERO_BLOCK);
+
+        self.backfill(
+            &mut main_rows,
+            &mut main_cols,
+            &mut gap_rows,
+            values,
+            output,
+        );
     }
 
-    // pub fn triangulate(&self, )
+    pub fn decode(&mut self, inputs: &Vec<Block>, values: &mut Vec<Block>, pp: &Vec<Block>) {
+        assert_eq!(pp.len(), self.size());
+
+        let main = inputs.len() / PAXOS_BUILD_ROW_SIZE * PAXOS_BUILD_ROW_SIZE;
+
+        let mut rows = Matrix::new(PAXOS_BUILD_ROW_SIZE, self.params.weight, 0usize);
+
+        let mut dense = vec![Block::from_i64(0, 0); PAXOS_BUILD_ROW_SIZE];
+
+        let mut i: usize = 0;
+        while i < main {
+            let iter = &inputs[i..i + PAXOS_BUILD_ROW_SIZE];
+            self.hasher.hash_build_row32(
+                iter,
+                rows.mut_row_data(0, PAXOS_BUILD_ROW_SIZE),
+                &mut dense,
+            );
+            self.decode32(
+                rows.row_data(0, PAXOS_BUILD_ROW_SIZE),
+                &dense,
+                &mut values[i..i + PAXOS_BUILD_ROW_SIZE],
+                pp,
+            );
+            i += PAXOS_BUILD_ROW_SIZE;
+        }
+        while i < inputs.len() {
+            let iter = &inputs[i..i + 1];
+            self.hasher
+                .hash_build_row1(iter, rows.mut_row_data(0, 1), &mut dense);
+            self.decode1(rows.row_data(0, 1), &dense[0], &mut values[i], pp);
+            i += 1;
+        }
+    }
+
+    pub fn decode32(
+        &mut self,
+        rows: &[usize],
+        dense: &[Block],
+        values: &mut [Block],
+        pp: &Vec<Block>,
+    ) {
+        let weight = self.params.weight;
+        for j in 0..4 {
+            let rows = &rows[j * 8 * weight..];
+            let values = &mut values[j * 8..];
+            values[0..8].iter_mut().enumerate().for_each(|(i, vv)| {
+                let c = rows[weight * i + 0];
+                *vv = pp[c];
+            });
+        }
+
+        for j in 1..weight {
+            for k in 0..4 {
+                let rows = &rows[k * 8 * weight..];
+                let values = &mut values[k * 8..];
+                values[0..8].iter_mut().enumerate().for_each(|(i, vv)| {
+                    let c = rows[weight * i + j];
+                    *vv = *vv ^ pp[c];
+                });
+            }
+        }
+        let sparse_size = self.params.sparse_size;
+        let dense_size = self.params.dense_size;
+        let p2: &[Block] = &pp[sparse_size..];
+        let mut xx: [Block; 32] = [Block::from_i64(0, 0); 32];
+        xx.iter_mut().enumerate().for_each(|(i, x)| {
+            *x = dense[i];
+        });
+        for k in 0..4 {
+            let values = &mut values[k * 8..];
+            let x = &mut xx[k * 8..];
+            values[0..8].iter_mut().enumerate().for_each(|(i, vv)| {
+                *vv = *vv ^ (p2[0].gf128_mul_reduce(&x[i]));
+            });
+        }
+
+        for j in 1..dense_size {
+            for k in 0..4 {
+                let x = &mut xx[k * 8..];
+                let dense = &dense[k * 8..];
+                let values = &mut values[k * 8..];
+                values[0..8].iter_mut().enumerate().for_each(|(i, vv)| {
+                    x[i] = x[i].gf128_mul_reduce(&dense[i]);
+                    *vv = *vv ^ (p2[j].gf128_mul_reduce(&x[i]));
+                });
+            }
+        }
+    }
+
+    pub fn decode1(&mut self, rows: &[usize], dense: &Block, value: &mut Block, pp: &[Block]) {
+        *value = pp[rows[0]];
+        assert_eq!(rows.len(), self.params.weight);
+        for j in 1..self.params.weight {
+            *value = *value ^ pp[rows[j]];
+        }
+        let mut x = *dense;
+        *value = *value ^ (pp[self.params.sparse_size].gf128_mul_reduce(&x));
+        pp[self.params.sparse_size + 1..].iter().for_each(|pp| {
+            x = x.gf128_mul_reduce(dense);
+            *value = *value ^ pp.gf128_mul_reduce(&x);
+        });
+    }
+
+    pub fn backfill(
+        &mut self,
+        main_rows: &mut Vec<usize>,
+        main_cols: &mut Vec<usize>,
+        gap_rows: &mut Vec<[usize; 2]>,
+        x: &Vec<Block>,
+        p: &mut Vec<Block>,
+    ) {
+        assert_eq!(main_rows.len(), main_cols.len());
+
+        let g = gap_rows.len();
+        let p2 = &mut p[self.params.sparse_size..];
+
+        assert!(g <= self.params.dense_size);
+
+        if g > 0 {
+            let fcinv: FCInv = self.get_fcinv(main_rows, main_cols, gap_rows);
+            let size = g;
+
+            let mut EE: Matrix<Block> = Matrix::new(size, size, *ZERO_BLOCK);
+
+            let mut xx = vec![Block::from_i64(0, 0); size];
+
+            // let fcb = vec![Block::from_i64(0, 0); size];
+
+            for i in 0..g {
+                let e = self.dense[gap_rows[i][0]];
+                let mut ej = e;
+                EE[(i, 0)] = e;
+                for j in 1..size {
+                    ej = ej.gf128_mul_reduce(&e);
+                    EE[(i, j)] = ej;
+                }
+                xx[i] = x[gap_rows[i][0]];
+                fcinv.mtx[i].iter().for_each(|&j: &usize| {
+                    xx[i] = xx[i] ^ x[j];
+                    let fcb = self.dense[j];
+                    let mut fcbk = fcb;
+                    EE[(i, 0)] = EE[(i, 0)] ^ fcbk;
+                    for k in 1..size {
+                        fcbk = fcbk.gf128_mul_reduce(&fcb);
+                        EE[(i, k)] = EE[(i, k)] ^ fcbk;
+                    }
+                });
+            }
+
+            // PRNG is None, TODO
+
+            EE = gf128_matrix_inv(EE);
+
+            assert!(EE.capacity != 0);
+
+            for i in 0..size {
+                let pp = &mut p2[i];
+                for j in 0..size {
+                    *pp = (*pp) ^ (xx[j].gf128_mul_reduce(&EE[(i, j)]));
+                }
+            }
+        }
+
+        let do_dense = g != 0;
+
+        let mut y = Block::from_i64(0, 0);
+
+        if self.params.weight == 3 {
+            main_rows
+                .iter()
+                .rev()
+                .zip(main_cols.iter().rev())
+                .for_each(|(&i, &c)| {
+                    y = x[i];
+
+                    let row = self.rows.row_data(i, 1);
+                    let cc0 = row[0];
+                    let cc1 = row[1];
+                    let cc2 = row[2];
+
+                    y = y ^ p[cc0];
+                    y = y ^ p[cc1];
+                    y = y ^ p[cc2];
+
+                    if do_dense {
+                        let d = self.dense[i];
+                        let mut x = d;
+                        y = y ^ p[self.params.sparse_size].gf128_mul_reduce(&x);
+
+                        for i in 1..self.params.dense_size {
+                            x = x.gf128_mul_reduce(&d);
+                            y = y ^ p[self.params.sparse_size + i].gf128_mul_reduce(&x);
+                        }
+                    }
+                    p[c] = y;
+                });
+        } else {
+            panic!("weight is not 3");
+        }
+    }
+
+    pub fn get_fcinv(
+        &self,
+        main_rows: &Vec<usize>,
+        main_cols: &Vec<usize>,
+        gap_rows: &Vec<[usize; 2]>,
+    ) -> FCInv {
+        let mut col_mapping: Vec<usize> = Vec::new();
+        let mut ret = FCInv::new(gap_rows.len());
+        let m = main_rows.len();
+        let invert_row_idx = |i: usize| m - i - 1;
+        for i in 0..gap_rows.len() {
+            if self.rows.row_data(gap_rows[i][0], 1) == self.rows.row_data(gap_rows[i][1], 1) {
+                ret.mtx[i].push(gap_rows[i][1]);
+            } else {
+                if col_mapping.len() == 0 {
+                    col_mapping.resize(self.size(), usize::MAX);
+                    for i in 0..m {
+                        col_mapping[main_cols[invert_row_idx(i)]] = i;
+                    }
+                }
+                let mut row: BTreeSet<usize> = BTreeSet::new();
+                for j in 0..self.params.weight {
+                    let c1 = self.rows[(gap_rows[i][0], j)];
+                    if col_mapping[c1] != usize::MAX {
+                        row.insert(col_mapping[c1]);
+                    }
+                }
+                while row.len() > 0 {
+                    let c_col = *row.last().unwrap();
+                    let c_row = c_col;
+                    let h_row = main_rows[invert_row_idx(c_row)];
+                    ret.mtx[i].push(h_row);
+                    self.rows.row_data(h_row, 1).iter().for_each(|h_col| {
+                        let c_col2 = col_mapping[*h_col];
+                        if c_col2 != usize::MAX {
+                            assert!(c_col2 <= c_col);
+                            let iter = row.get(&c_col2);
+                            if iter.is_none() {
+                                row.insert(c_col2);
+                            } else {
+                                let target = *iter.unwrap();
+                                row.remove(&target);
+                            }
+                        }
+                    });
+                    assert!(row.len() == 0 || *row.last().unwrap() != c_col);
+                }
+            }
+        }
+        ret
+    }
+
+    pub fn triangulate(
+        &mut self,
+        main_row: &mut Vec<usize>,
+        main_col: &mut Vec<usize>,
+        gap_rows: &mut Vec<[usize; 2]>,
+    ) {
+        assert!(self.weight_sets.is_some());
+
+        let mut row_set = vec![0u8; self.items_num];
+        let weight_sets = self.weight_sets.as_mut().unwrap();
+        while weight_sets.weight_sets.len() > 1 {
+            let col = weight_sets.get_min_weightnode();
+            weight_sets.pop_node(col);
+
+            unsafe {
+                (*col).weight = 0;
+                let col_index = weight_sets.idx_of(&(*col));
+                let mut first: bool = true;
+                self.cols[col_index].iter().for_each(|&row_idx| {
+                    if row_set[row_idx] == 0 {
+                        row_set[row_idx] = 1;
+                        self.rows.row_data(row_idx, 1).iter().for_each(|&col_idx2| {
+                            let node: *mut WeightNode =
+                                &mut weight_sets.nodes[col_idx2] as *mut WeightNode;
+
+                            if (*node).weight != 0 {
+                                weight_sets.pop_node(node as *mut WeightNode);
+                                (*node).weight -= 1;
+                                weight_sets.push_node(node);
+                                // TODO prefetch next column
+                            }
+                        });
+
+                        if first {
+                            main_col.push(col_index);
+                            main_row.push(row_idx);
+                            first = false;
+                        } else {
+                            assert_ne!(*main_row.last().unwrap(), row_idx);
+                            gap_rows.push([row_idx, *main_row.last().unwrap()]);
+                        }
+                    }
+                });
+                assert_eq!(first, false);
+            }
+        }
+    }
+
+    pub fn rebuild_columns(&mut self, col_weights: &[usize], total_weight: usize) {
+        assert_eq!(self.col_backing.len(), total_weight);
+
+        // TODO: remove when release
+        let mut col_sum: usize = 0;
+        col_weights.iter().for_each(|x| {
+            col_sum += x;
+        });
+        assert_eq!(col_sum, total_weight);
+
+        if self.rows.cols() == 3 {
+            for i in 0..self.items_num {
+                // rows
+                let row = self.rows.row_data(i, 1);
+                self.cols[row[0]].push(i);
+                self.cols[row[1]].push(i);
+                self.cols[row[2]].push(i);
+            }
+            // copy cols to colbacking
+            let mut col_backing_start = 0;
+            self.cols.iter().for_each(|x| {
+                if x.len() == 0 {
+                    return ;
+                }
+                assert!(col_backing_start < self.col_backing.len());
+                self.col_backing[col_backing_start..col_backing_start + x.len()].copy_from_slice(x);
+                col_backing_start += x.len();
+            });
+        } else {
+            panic!("weight is not 3, TODO");
+        }
+    }
 }
 
 /// convert row items to sparse vector with length m'
@@ -251,12 +659,9 @@ impl PaxosHash {
     pub fn new<T>(seed: Block, weight: usize, paxos_size: usize) -> PaxosHash {
         unsafe {
             let idbit_length = std::mem::size_of::<T>() * 8;
-            let bit_length = round_up_to((paxos_size as f64).log2().ceil() as u64, 8) as usize;
-            assert_eq!(bit_length, idbit_length);
+            let idx_size: usize = idbit_length / 8;
 
-            let idx_size = bit_length / 8;
-
-            let pointer: *const c_void = new_paxos_hash(bit_length);
+            let pointer: *const c_void = new_paxos_hash(idbit_length);
             init_paxos_hash(
                 pointer,
                 &seed as *const Block as *const c_void,
@@ -424,6 +829,37 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    #[test]
+    fn paxos_encode_test() {
+        let n: usize = 1 << 20;
+        let w = 3usize;
+        let s = 0usize;
+        let t = 1usize;
+        
+        for tt in 0..t {
+            let mut paxos = Paxos::new(n, w, 40, *ZERO_BLOCK);
+            let mut paxos2 = Paxos::new(n, w, 40, *ZERO_BLOCK);
+            let prng = Prng::new(Block::from_i64(tt as i64, s as i64));
+            let items = prng.get_blocks(n);
+            let values = prng.get_blocks(n);
+            let mut values2 = vec![Block::from_i64(0, 0); n];
+            let mut p = vec![Block::from_i64(0, 0); paxos.size()];
+            paxos.set_input(&items);
+            paxos2.set_input(&items);
+            for i in 0..paxos.rows.rows() {
+                for j in 0..w {
+                    assert_eq!(paxos.rows[(i, j)], paxos2.rows[(i, j)]);
+                }
+            }
+            paxos.encode(&values, &mut p, None);
+            paxos.decode(&items, &mut values2, &p);
+            values.iter().zip(values2.iter()).enumerate().for_each(|(i, (x1, x2))| {
+                assert_eq!(x1, x2);
+            });
+
         }
     }
 }

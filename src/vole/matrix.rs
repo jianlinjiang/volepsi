@@ -47,6 +47,20 @@ where
     pub fn mut_data(&mut self) -> &mut [T] {
         &mut self.storage
     }
+
+    pub fn row_data(&self, row_id: usize, row_size: usize) -> &[T] {
+        if row_id >= self.rows() {
+            panic!("row id is out of bound {}", row_id);
+        }
+        &self.storage[row_id * self.stride..(row_id + row_size) * self.stride]
+    }
+
+    pub fn mut_row_data(&mut self, row_id: usize, row_size: usize) -> &mut [T] {
+        if row_id >= self.rows() {
+            panic!("row id is out of bound {}", row_id);
+        }
+        &mut self.storage[row_id * self.stride..(row_id + row_size) * self.stride]
+    }
 }
 
 impl<T: PartialEq + Copy> PartialEq for Matrix<T> {

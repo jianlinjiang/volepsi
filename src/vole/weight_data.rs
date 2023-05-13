@@ -3,18 +3,18 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 #[derive(Debug, Clone)]
 pub struct WeightNode {
-    weight: u64,
-    prev_node: u64,
-    next_node: u64,
+    pub weight: usize,
+    pub prev_node: usize,
+    pub next_node: usize,
 }
 
 #[derive(Debug, Clone)]
 pub struct WeightData {
-    nodes: Vec<WeightNode>,
-    weight_sets: Vec<Option<*mut WeightNode>>,
+    pub nodes: Vec<WeightNode>,
+    pub weight_sets: Vec<Option<*mut WeightNode>>,
 }
 
-static NULL_NODE: u64 = 0;
+static NULL_NODE: usize = usize::MAX;
 
 fn idx_of(node: *const WeightNode, start: *const WeightNode) -> usize {
     unsafe { (node as *const WeightNode).offset_from(start as *const WeightNode) as usize }
@@ -28,16 +28,19 @@ impl<'a> WeightData {
     }
 
     pub fn validate(&mut self) {
-        let mut nodes: HashSet<u64> = HashSet::new();
+        let mut nodes: HashSet<usize> = HashSet::new();
         for i in 0..self.weight_sets.len() {
             let mut head = self.weight_sets[i];
             while head.is_some() {
                 let pointer = head.unwrap();
                 unsafe {
-                    assert_eq!((*pointer).weight, i as u64);
-                    assert_eq!(nodes.insert(self.idx_of(&(*pointer)) as u64), true);
+                    assert_eq!((*pointer).weight, i as usize);
+                    assert_eq!(nodes.insert(self.idx_of(&(*pointer)) as usize), true);
                     if (*pointer).next_node != NULL_NODE {
-                        assert_eq!(self.nodes[(*pointer).next_node as usize].prev_node, self.idx_of(&(*pointer)) as u64);
+                        assert_eq!(
+                            self.nodes[(*pointer).next_node as usize].prev_node,
+                            self.idx_of(&(*pointer)) as usize
+                        );
                         head = Some(&mut self.nodes[(*pointer).next_node as usize]);
                     } else {
                         head = None;
@@ -47,7 +50,7 @@ impl<'a> WeightData {
         }
     }
 
-    pub fn init(weights: &Vec<u64>) -> WeightData {
+    pub fn init(weights: &Vec<usize>) -> WeightData {
         let mut nodes: Vec<WeightNode> = vec![
             WeightNode {
                 weight: 0,
@@ -60,7 +63,7 @@ impl<'a> WeightData {
         let mut weight_sets: Vec<Option<*mut WeightNode>> = vec![None; 20];
         let start: *const WeightNode = &nodes[0];
         for i in 0..weights.len() {
-            let mut node = &mut nodes[i];
+            let mut node: &mut WeightNode = &mut nodes[i];
             node.weight = weights[i];
             node.prev_node = NULL_NODE;
             node.next_node = NULL_NODE;
@@ -75,14 +78,14 @@ impl<'a> WeightData {
                 let w: *mut WeightNode = ws.unwrap();
                 unsafe {
                     assert_eq!((*w).prev_node, NULL_NODE);
-                    (*w).prev_node = idx_of(node, start) as u64;
-                    node.next_node = idx_of(w, start) as u64;
+                    (*w).prev_node = idx_of(node, start) as usize;
+                    node.next_node = idx_of(w, start) as usize;
                 }
             }
             weight_sets[node.weight as usize] = Some(node as *mut WeightNode);
         }
         let mut i = weight_sets.len() - 1;
-        loop {    
+        loop {
             if weight_sets[i].is_some() {
                 weight_sets.resize(i + 1, None);
                 break;
@@ -90,13 +93,11 @@ impl<'a> WeightData {
             i = i - 1;
         }
         WeightData { nodes, weight_sets }
-
     }
 
     pub fn get_min_weightnode(&self) -> *mut WeightNode {
         for i in 1..self.weight_sets.len() {
             if self.weight_sets[i].is_some() {
-
                 return self.weight_sets[i].unwrap();
             }
         }
@@ -118,8 +119,8 @@ impl<'a> WeightData {
             } else {
                 let ptr = self.weight_sets[weight].unwrap();
                 assert_eq!((*ptr).prev_node, NULL_NODE);
-                (*ptr).prev_node = self.idx_of(&(*node)) as u64;
-                (*node).next_node = self.idx_of(&(*ptr)) as u64;
+                (*ptr).prev_node = self.idx_of(&(*node)) as usize;
+                (*node).next_node = self.idx_of(&(*ptr)) as usize;
                 self.weight_sets[weight] = Some(node);
             }
         }
@@ -127,20 +128,24 @@ impl<'a> WeightData {
 
     pub fn pop_node(&mut self, node: *mut WeightNode) {
         unsafe {
-            let weight = (*node).weight as usize;
-            if (*node).prev_node == NULL_NODE { // 链表头部
+            let weight: usize = (*node).weight as usize;
+            if (*node).prev_node == NULL_NODE {
+                // 链表头部
                 assert_eq!(self.weight_sets[weight].unwrap(), node);
 
-                if (*node).next_node == NULL_NODE { // 链表里仅有这一个元素
+                if (*node).next_node == NULL_NODE {
+                    // 链表里仅有这一个元素
                     self.weight_sets[weight] = None;
-                    while self.weight_sets.last() == None {
+                    while self.weight_sets.last().unwrap().is_none() {
                         self.weight_sets.pop();
                     }
                 } else {
-                    self.weight_sets[weight] = Some(&mut self.nodes[(*node).next_node as usize] as *mut WeightNode);
+                    self.weight_sets[weight] =
+                        Some(&mut self.nodes[(*node).next_node as usize] as *mut WeightNode);
                     (*self.weight_sets[weight].unwrap()).prev_node = NULL_NODE;
                 }
-            } else {    // 在链表中间
+            } else {
+                // 在链表中间
                 let start = &mut self.nodes[0] as *mut WeightNode;
                 {
                     let prev: *mut WeightNode = start.offset((*node).prev_node as isize);
@@ -165,6 +170,11 @@ impl<'a> WeightData {
             (*node).weight -= 1;
             self.push_node(node);
         }
+    }
+
+    pub fn decrease_column_weight(&mut self, col_idx: usize) {
+        let node = &mut self.nodes[col_idx] as *mut WeightNode;
+        self.pop_node(node);
     }
 }
 
@@ -192,10 +202,12 @@ mod tests {
     fn weightdata_test() {
         let mut rng = thread_rng();
 
-        let weights: Vec<u64> = (0..1000).into_iter().map(|_| {
-            rng.next_u64() % 5 + 1
-        }).collect();
+        let weights: Vec<usize> = (0..1000)
+            .into_iter()
+            .map(|_| (rng.next_u64() % 5) as usize)
+            .collect();
         let mut data = WeightData::init(&weights);
+        println!("weight sets len {}", data.weight_sets.len());
         data.validate();
         let mut i = 0;
         loop {
@@ -205,10 +217,9 @@ mod tests {
                     data.decement_weight(node);
                 }
                 break;
-            } else {    
+            } else {
                 i += 1;
             }
         }
-        
     }
 }
