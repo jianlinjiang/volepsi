@@ -33,7 +33,7 @@ impl Aes {
         unsafe {
             Aes {
                 aes_pointer: new_aes(),
-                key: Block::from_i64(0, 0),
+                key: Block::from_i64(-1, -1),
             }
         }
     }
@@ -47,6 +47,7 @@ impl Aes {
 
     /// H(x) = AES(x) + x.
     pub fn hash_block(&self, plain_text: &Block) -> Block {
+        assert_ne!(self.key, Block::from_i64(-1, -1));
         let mut cipher = Block::from_i64(0, 0);
         unsafe {
             hash_blocks(
@@ -65,6 +66,7 @@ impl Aes {
         block_length: usize,
         ciphertexts: &mut [Block],
     ) {
+        assert_ne!(self.key, Block::from_i64(-1, -1));
         unsafe {
             hash_blocks(
                 self.aes_pointer,

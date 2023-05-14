@@ -50,7 +50,7 @@ impl<'a> WeightData {
         }
     }
 
-    pub fn init(weights: &Vec<usize>) -> WeightData {
+    pub fn init(weights: &[usize]) -> WeightData {
         let mut nodes: Vec<WeightNode> = vec![
             WeightNode {
                 weight: 0,
@@ -60,7 +60,7 @@ impl<'a> WeightData {
             weights.len()
         ];
 
-        let mut weight_sets: Vec<Option<*mut WeightNode>> = vec![None; 20];
+        let mut weight_sets: Vec<Option<*mut WeightNode>> = vec![None; 200];
         let start: *const WeightNode = &nodes[0];
         for i in 0..weights.len() {
             let mut node: &mut WeightNode = &mut nodes[i];

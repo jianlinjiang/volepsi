@@ -121,12 +121,12 @@ pub fn gf128_matrix_mul(m0: &Matrix<Block>, m1: &Matrix<Block>) -> Matrix<Block>
 }
 
 #[derive(Clone, Debug)]
-struct PaxosParam {
-    sparse_size: usize,
-    dense_size: usize,
-    weight: usize,
-    g: usize,
-    ssp: usize, // static safe parameter = 40
+pub struct PaxosParam {
+    pub sparse_size: usize,
+    pub dense_size: usize,
+    pub weight: usize,
+    pub g: usize,
+    pub ssp: usize, // static safe parameter = 40
 }
 
 impl PaxosParam {
@@ -180,10 +180,14 @@ impl PaxosParam {
             ssp,
         }
     }
+
+    pub fn size(&self) -> usize {
+        self.sparse_size + self.dense_size
+    }
 }
 
 #[derive(Clone, Debug)]
-struct FCInv {
+pub struct FCInv {
     pub mtx: Vec<Vec<usize>>,
 }
 
@@ -196,16 +200,16 @@ impl FCInv {
 }
 
 #[derive(Clone, Debug)]
-struct Paxos {
-    items_num: usize,
-    seed: Block,
-    params: PaxosParam,
-    hasher: PaxosHash,
-    dense: Vec<Block>,
-    rows: Matrix<usize>,
-    cols: Vec<Vec<usize>>,
-    col_backing: Vec<usize>,
-    weight_sets: Option<WeightData>,
+pub struct Paxos {
+    pub items_num: usize,
+    pub seed: Block,
+    pub params: PaxosParam,
+    pub hasher: PaxosHash,
+    pub dense: Vec<Block>,
+    pub rows: Matrix<usize>,
+    pub cols: Vec<Vec<usize>>,
+    pub col_backing: Vec<usize>,
+    pub weight_sets: Option<WeightData>,
 }
 
 impl Paxos {
@@ -242,6 +246,22 @@ impl Paxos {
         }
     }
 
+    pub fn new_with_params(items_num: usize, params: &PaxosParam, seed: Block) -> Paxos {
+        let weight = params.weight;
+        let hasher = PaxosHash::new::<usize>(seed, weight, params.sparse_size);
+        Paxos {
+            items_num,
+            seed,
+            params: params.clone(),
+            hasher,
+            dense: vec![Block::from_i64(0, 0); items_num],
+            rows: Matrix::new(items_num, weight, 0),
+            cols: vec![vec![]; params.sparse_size],
+            col_backing: vec![0; items_num * weight],
+            weight_sets: None,
+        }
+    }
+
     pub fn set_input(&mut self, inputs: &Vec<Block>) {
         assert_eq!(self.items_num, inputs.len());
 
@@ -259,7 +279,7 @@ impl Paxos {
 
         let mut i = 0;
         while i < main {
-            let rr = self.rows.mut_row_data(i, PAXOS_BUILD_ROW_SIZE);
+            let rr: &mut [usize] = self.rows.mut_row_data(i, PAXOS_BUILD_ROW_SIZE);
             let hash = &mut self.dense[i..i + PAXOS_BUILD_ROW_SIZE];
             self.hasher
                 .hash_build_row32(&inputs[i..i + PAXOS_BUILD_ROW_SIZE], rr, hash);
@@ -289,7 +309,7 @@ impl Paxos {
         self.weight_sets = Some(WeightData::init(&col_weights));
     }
 
-    pub fn encode(&mut self, values: &Vec<Block>, output: &mut Vec<Block>, prng: Option<Prng>) {
+    pub fn encode(&mut self, values: &[Block], output: &mut [Block], prng: Option<Prng>) {
         if output.len() != self.size() {
             panic!("output size doesn't match");
         }
@@ -349,7 +369,7 @@ impl Paxos {
         rows: &[usize],
         dense: &[Block],
         values: &mut [Block],
-        pp: &Vec<Block>,
+        pp: &[Block],
     ) {
         let weight = self.params.weight;
         for j in 0..4 {
@@ -418,8 +438,8 @@ impl Paxos {
         main_rows: &mut Vec<usize>,
         main_cols: &mut Vec<usize>,
         gap_rows: &mut Vec<[usize; 2]>,
-        x: &Vec<Block>,
-        p: &mut Vec<Block>,
+        x: &[Block],
+        p: &mut [Block],
     ) {
         assert_eq!(main_rows.len(), main_cols.len());
 
@@ -633,7 +653,7 @@ impl Paxos {
             let mut col_backing_start = 0;
             self.cols.iter().for_each(|x| {
                 if x.len() == 0 {
-                    return ;
+                    return;
                 }
                 assert!(col_backing_start < self.col_backing.len());
                 self.col_backing[col_backing_start..col_backing_start + x.len()].copy_from_slice(x);
@@ -643,11 +663,60 @@ impl Paxos {
             panic!("weight is not 3, TODO");
         }
     }
+
+    pub fn set_mul_inputs(
+        &mut self,
+        rows: &Matrix<usize>,
+        dense: &[Block],
+        // cols: &Vec<Vec<usize>>,
+        // col_backing: &[usize],
+        col_weights: &[usize],
+    ) {
+        // assert_eq!(rows.rows(), self.items_num);
+        assert_eq!(dense.len(), self.items_num);
+        assert_eq!(rows.cols(), self.params.weight);
+        // assert_eq!(col_backing.len(), self.items_num * self.params.weight);
+        assert_eq!(col_weights.len(), self.params.sparse_size);
+        self.rows
+            .storage
+            .iter_mut()
+            .zip(rows.storage.iter())
+            .for_each(|(self_row, &row)| {
+                *self_row = row;
+            });
+        self.dense
+            .iter_mut()
+            .zip(dense.iter())
+            .for_each(|(self_dense, &d)| {
+                *self_dense = d;
+            });
+        // self.cols
+        //     .iter_mut()
+        //     .zip(cols.iter())
+        //     .for_each(|(self_col, col)| {
+        //         self_col.resize(col.len(), 0);
+        //         self_col
+        //             .iter_mut()
+        //             .zip(col.iter())
+        //             .for_each(|(s_col, col)| {
+        //                 *s_col = *col;
+        //             });
+        //     });
+        // self.col_backing
+        //     .iter_mut()
+        //     .zip(col_backing.iter())
+        //     .for_each(|(self_col, col)| {
+        //         *self_col = *col;
+        //     });
+        self.rebuild_columns(col_weights, self.params.weight * self.items_num);
+        assert!(self.weight_sets.is_none());
+        self.weight_sets = Some(WeightData::init(col_weights))
+    }
 }
 
 /// convert row items to sparse vector with length m'
 #[derive(Clone, Debug)]
-struct PaxosHash {
+pub struct PaxosHash {
     weight: usize,
     sparse_size: usize,
     idx_size: usize,
@@ -679,11 +748,11 @@ impl PaxosHash {
         }
     }
 
-    pub fn build_row<T>(&self, hash: Block, row: &mut [T]) {
+    pub fn build_row<T>(&self, hash: &Block, row: &mut [T]) {
         unsafe {
             build_row_raw(
                 self.pointer,
-                &hash as *const Block as *const c_void,
+                hash as *const Block as *const c_void,
                 row.as_mut_ptr() as *mut c_void,
                 self.idbit_length,
             );
@@ -691,6 +760,7 @@ impl PaxosHash {
     }
 
     pub fn build_row32<T>(&self, hash: &[Block], row: &mut [T]) {
+        assert_eq!(hash.len(), 32);
         unsafe {
             build_row32_raw(
                 self.pointer,
@@ -819,8 +889,8 @@ mod tests {
 
             for i in 0..32 {
                 let mut rr: [u16; 3] = [0; 3];
-                h.build_row(hash[i], &mut rr);
-
+                h.build_row(&hash[i], &mut rr);
+                println!("{:?}", rr);
                 for j in 0..3 {
                     assert_eq!(rows[(i, j)], rr[j]);
 
@@ -838,7 +908,7 @@ mod tests {
         let w = 3usize;
         let s = 0usize;
         let t = 1usize;
-        
+
         for tt in 0..t {
             let mut paxos = Paxos::new(n, w, 40, *ZERO_BLOCK);
             let mut paxos2 = Paxos::new(n, w, 40, *ZERO_BLOCK);
@@ -856,10 +926,18 @@ mod tests {
             }
             paxos.encode(&values, &mut p, None);
             paxos.decode(&items, &mut values2, &p);
-            values.iter().zip(values2.iter()).enumerate().for_each(|(i, (x1, x2))| {
-                assert_eq!(x1, x2);
-            });
-
+            values
+                .iter()
+                .zip(values2.iter())
+                .enumerate()
+                .for_each(|(i, (x1, x2))| {
+                    assert_eq!(x1, x2);
+                });
         }
+    }
+
+    #[test]
+    fn paxos_hash_test() {
+
     }
 }

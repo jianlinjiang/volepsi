@@ -1,4 +1,5 @@
 pub mod aes;
+pub mod baxos;
 pub mod block;
 pub mod matrix;
 pub mod paxos;

@@ -12,6 +12,9 @@ fn main() {
     paxos_hash_cpp.push("crypto_binding/paxos_hash.cpp");
     let mut prng_cpp = path.clone();
     prng_cpp.push("crypto_binding/prng.cpp");
+
+    let mut index_cpp: std::path::PathBuf = path.clone();
+    index_cpp.push("crypto_binding/SimpleIndex.cpp");
     cc::Build::new()
         .file(&rs_vole_cpp)
         .flag("-Wno-unknown-pragmas")
@@ -29,6 +32,7 @@ fn main() {
         .file(&rs_aes_cpp)
         .file(&paxos_hash_cpp)
         .file(&prng_cpp)
+        .file(&index_cpp)
         .flag("-Wno-unknown-pragmas")
         .flag("-Wno-sign-compare")
         .flag("-Wno-unused-parameter")
@@ -55,6 +59,7 @@ fn main() {
         paxos_hash_cpp.to_str().unwrap()
     );
     println!("cargo:rerun-if-changed={}", prng_cpp.to_str().unwrap());
+    println!("cargo:rerun-if-changed={}", index_cpp.to_str().unwrap());
     println!(
         "cargo:rerun-if-changed={}",
         paxos_hash_cpp.to_str().unwrap()

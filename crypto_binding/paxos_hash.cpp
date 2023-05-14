@@ -6,6 +6,8 @@ inline block256 my_libdivide_u64_do_vec256(const block256& x, const libdivide::l
     return libdivide::libdivide_u64_do_vec256(x, divider);
 }
 
+libdivide::libdivide_u64_t divider;
+
 inline void doMod32(u64* vals, const libdivide::libdivide_u64_t* divider, const u64& modVal)
 {
     {
@@ -459,5 +461,13 @@ extern "C" {
             PaxosHash<u64>* h = (PaxosHash<u64>*) hasher;
             h->hashBuildRow32((const block*)input, (u64*)rows, (block*) hash);
         } 
+    }
+
+    void libdivide_u64_gen(size_t bins) {
+        divider = libdivide::libdivide_u64_gen(bins);
+    }
+
+    void do_mod32(size_t* vals, const size_t mod_val) {
+        doMod32(vals, &divider, mod_val);
     }
 }
