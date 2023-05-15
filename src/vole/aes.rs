@@ -12,6 +12,13 @@ extern "C" {
         cipher_text: *mut c_void,
     );
     pub fn delete_aes(pointer: *const c_void);
+    pub fn fixed_key_hash_blocks(
+        plain_text: *const c_void,
+        block_length: usize,
+        cipher_text: *mut c_void,
+    );
+
+    pub fn set_block_mask(block: *mut c_void, mask: usize);
 }
 
 #[derive(Clone, Debug)]

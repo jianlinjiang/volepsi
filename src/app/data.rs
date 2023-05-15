@@ -9,7 +9,7 @@ pub struct Data {
 
 #[derive(Deserialize, Debug)]
 pub struct Id {
-    pub id: u64,
+    pub id: usize,
 }
 
 pub fn encode_data(year: u16, month: u16, day: u16, age: u16) -> u64 {

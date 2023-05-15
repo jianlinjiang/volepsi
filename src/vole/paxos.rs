@@ -218,7 +218,7 @@ impl Paxos {
     }
 
     /// solve/encode
-    pub fn solve<R: Rng>(&self, inputs: &Vec<Block>, values: Vec<Block>, prng: Option<R>) {
+    pub fn solve<R: Rng>(&self, inputs: &Vec<Block>, values: Vec<Block>, _prng: Option<R>) {
         if self.items_num != inputs.len() {
             panic!("items and input length doesn't match!")
         }
@@ -309,7 +309,7 @@ impl Paxos {
         self.weight_sets = Some(WeightData::init(&col_weights));
     }
 
-    pub fn encode(&mut self, values: &[Block], output: &mut [Block], prng: Option<Prng>) {
+    pub fn encode(&mut self, values: &[Block], output: &mut [Block], _prng: Option<Prng>) {
         if output.len() != self.size() {
             panic!("output size doesn't match");
         }
@@ -690,24 +690,6 @@ impl Paxos {
             .for_each(|(self_dense, &d)| {
                 *self_dense = d;
             });
-        // self.cols
-        //     .iter_mut()
-        //     .zip(cols.iter())
-        //     .for_each(|(self_col, col)| {
-        //         self_col.resize(col.len(), 0);
-        //         self_col
-        //             .iter_mut()
-        //             .zip(col.iter())
-        //             .for_each(|(s_col, col)| {
-        //                 *s_col = *col;
-        //             });
-        //     });
-        // self.col_backing
-        //     .iter_mut()
-        //     .zip(col_backing.iter())
-        //     .for_each(|(self_col, col)| {
-        //         *self_col = *col;
-        //     });
         self.rebuild_columns(col_weights, self.params.weight * self.items_num);
         assert!(self.weight_sets.is_none());
         self.weight_sets = Some(WeightData::init(col_weights))
@@ -937,7 +919,5 @@ mod tests {
     }
 
     #[test]
-    fn paxos_hash_test() {
-
-    }
+    fn paxos_hash_test() {}
 }

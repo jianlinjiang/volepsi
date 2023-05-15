@@ -68,7 +68,7 @@ impl<'a> WeightData {
             node.prev_node = NULL_NODE;
             node.next_node = NULL_NODE;
 
-            if node.weight as usize >= weights.len() {
+            if node.weight as usize >= weight_sets.len() {
                 panic!("something went wrong, maybe duplicate inputs.");
             }
 

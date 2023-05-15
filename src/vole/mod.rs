@@ -4,6 +4,8 @@ pub mod block;
 pub mod matrix;
 pub mod paxos;
 pub mod prng;
+pub mod psi_reveiver;
+pub mod psi_sender;
 pub mod silent_vole_receiver;
 pub mod silent_vole_sender;
 pub mod utils;

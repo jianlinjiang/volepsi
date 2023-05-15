@@ -135,6 +135,27 @@ extern "C" {
         osuCrypto::cp::sync_wait(chl.flush());
     }
 
+    void get_sender_b(void* b, size_t n) {
+        if (n != sender->mB.size()) {
+            throw std::runtime_error("size doesn't match" LOCATION);
+        }
+        memcpy(b, sender->mB.data(), sizeof(block) * n);
+    }
+
+    void get_receiver_c(void *c, size_t n) {
+        if (n != receiver->mC.size()) {
+            throw std::runtime_error("size doesn't match" LOCATION);
+        }
+        memcpy(c, receiver->mC.data(), sizeof(block) * n);
+    }
+
+    void get_receiver_a(void *a, size_t n) {
+        if (n != receiver->mA.size()) {
+            throw std::runtime_error("size doesn't match" LOCATION);
+        }
+        memcpy(a, receiver->mA.data(), sizeof(block) * n);
+    }
+
 
     
 }

@@ -1,4 +1,4 @@
-use super::block::Block;
+use super::block::{Block, ZERO_BLOCK};
 use std::ffi::c_void;
 
 #[link(name = "rcrypto")]
@@ -28,6 +28,14 @@ impl Prng {
             get_blocks_raw(self.pointer, blocks.as_mut_ptr() as *mut c_void, block_num);
         }
         blocks
+    }
+
+    pub fn get_block(&self) -> Block {
+        let mut block = *ZERO_BLOCK;
+        unsafe {
+            get_blocks_raw(self.pointer, &mut block as *mut Block as *mut c_void, 1);
+        }
+        block
     }
 }
 

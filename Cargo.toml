@@ -25,7 +25,11 @@ clap = { version = "4.1.6", features = [ "derive"] }
 lazy_static = "1.4.0"
 num = "0.4.0"
 ark-std = "0.4.0"
+crossbeam-channel = "0.5"
+blake2 = "0.10"
 [features]
+default = ["parallel"]
+parallel = []
 
 [build-dependencies]
 cc = "1.0"

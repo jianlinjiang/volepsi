@@ -294,10 +294,10 @@ namespace volePSI
 
                 auto B = std::ceil(std::pow(2, b0));
 
-#if !defined(NDEBUG) && defined(ENABLE_BOOST)
-                auto B2 = get_bin_size(numBins, numBalls, statSecParam, false);
-                assert(B2 <= B);
-#endif
+// #if !defined(NDEBUG) && defined(ENABLE_BOOST)
+//                 auto B2 = get_bin_size(numBins, numBalls, statSecParam, false);
+//                 assert(B2 <= B);
+// #endif
                 return B;
             }
         }

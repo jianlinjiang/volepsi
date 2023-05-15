@@ -12,7 +12,7 @@ async fn main() {
     let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8000);
     let start = Instant::now();
     let receiver = SilentVoleReceiver::new(address, &mut rng);
-    receiver.init();
+    receiver.init(1 << 20);
     let duration = start.elapsed();
     info!("Time elapsed is: {:?}", duration);
 }

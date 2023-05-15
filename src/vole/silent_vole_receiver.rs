@@ -1,6 +1,8 @@
+use super::block::{Block, ZERO_BLOCK};
 use super::VoleRole;
 use log::debug;
 use rand::Rng;
+use std::ffi::c_void;
 use std::ffi::CString;
 use std::net::SocketAddr;
 use std::os::raw::c_char;
@@ -8,6 +10,8 @@ use std::os::raw::c_char;
 extern "C" {
     pub fn init_silent_vole(role: i32, ip: *const c_char, seed: *const u64, vector_size: u64);
     pub fn silent_receive_inplace(vector_size: u64);
+    pub fn get_receiver_c(c: *mut c_void, n: usize);
+    pub fn get_receiver_a(a: *mut c_void, n: usize);
 }
 
 pub struct SilentVoleReceiver {
@@ -23,7 +27,7 @@ impl SilentVoleReceiver {
         }
     }
 
-    pub fn init(&self) {
+    pub fn init(&self, n: usize) {
         let ip_str = CString::new(self.sender_address.to_string()).unwrap();
         debug!("sender ip {:?}", ip_str);
         unsafe {
@@ -31,9 +35,19 @@ impl SilentVoleReceiver {
                 VoleRole::Receiver as i32,
                 ip_str.as_ptr(),
                 self.seed.as_ptr(),
-                2 << 20,
+                n as u64,
             );
-            silent_receive_inplace(2 << 20);
+            silent_receive_inplace(n as u64);
         }
+    }
+
+    pub fn get_a_c(&self, n: usize) -> (Vec<Block>, Vec<Block>) {
+        let mut a = vec![*ZERO_BLOCK; n];
+        let mut c = vec![*ZERO_BLOCK; n];
+        unsafe {
+            get_receiver_a(a.as_mut_ptr() as *mut c_void, n);
+            get_receiver_c(c.as_mut_ptr() as *mut c_void, n);
+        }
+        (a, c)
     }
 }

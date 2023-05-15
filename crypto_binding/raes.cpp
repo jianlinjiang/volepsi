@@ -1,4 +1,5 @@
 #include <cryptoTools/Crypto/AES.h>
+const osuCrypto::AES mAesFixedKey({0,0});
 using block = osuCrypto::block;
 extern "C" {
     void set_key(const void *aes, const void* key) {
@@ -23,6 +24,19 @@ extern "C" {
         osuCrypto::AES* p = (osuCrypto::AES*) aes;
         if (p != nullptr) {
             delete p;
+        }
+    }
+
+    void fixed_key_hash_blocks(const void* plaintext, const size_t block_length, void* ciphertext) {
+        const block* p = (const block*)plaintext;
+        block* c = (block*) ciphertext;
+        mAesFixedKey.hashBlocks(p, block_length, c);
+    }
+
+    void set_block_mask(void* b, size_t mask) {
+        block* bb = (block*)b;
+        for(int i = 0; i < mask; i++) {
+            bb->set<uint8_t>(i, ~0);
         }
     }
 }

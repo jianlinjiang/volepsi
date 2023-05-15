@@ -1,9 +1,12 @@
+use libc::c_void;
+use libc::memcpy;
 use rand::Rng;
 #[cfg(target_arch = "x86")]
 use std::arch::x86::*;
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 use std::cmp::{Ordering, PartialEq};
+use std::hash::Hasher;
 use std::ops::{Add, BitAnd, BitOr, BitOrAssign, BitXor, BitXorAssign, Not, Sub};
 #[derive(Copy, Clone, Debug)]
 pub struct Block(pub __m128i);
@@ -18,6 +21,14 @@ lazy_static! {
 }
 
 impl Block {
+    pub fn get(&self, id: usize) -> u64 {
+        assert!(id < 2);
+        unsafe {
+            let pointer = &self.0 as *const __m128i as *const u64;
+            *pointer.add(id)
+        }
+    }
+
     pub fn from_i64(x1: i64, x2: i64) -> Self {
         Block(unsafe { _mm_set_epi64x(x1, x2) })
     }
@@ -84,6 +95,18 @@ impl Block {
         unsafe {
             self.0 = _mm_setzero_si128();
         }
+    }
+
+    pub fn copy_from_u8(data: [u8; 16]) -> Block {
+        let mut d = *ZERO_BLOCK;
+        unsafe {
+            memcpy(
+                &mut d as *mut Block as *mut c_void,
+                data.as_ptr() as *const c_void,
+                16,
+            );
+        }
+        d
     }
 }
 
@@ -170,6 +193,13 @@ impl PartialOrd for Block {
     }
 }
 
+impl std::hash::Hash for Block {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.get(0).hash(state);
+        self.get(1).hash(state);
+    }
+}
+
 impl Ord for Block {
     fn cmp(&self, other: &Self) -> Ordering {
         unsafe {
@@ -234,6 +264,18 @@ mod tests {
             let c = a + b;
             let d = a ^ b;
             assert_eq!(c, d);
+        }
+    }
+
+    #[test]
+    fn block_ser_test() {
+        let mut rng = thread_rng();
+        for i in 0..10 {
+            let a = Block::rand(&mut rng);
+            let a0 = a.get(0);
+            let a1 = a.get(1);
+            let b = Block::from_i64(a1 as i64, a0 as i64);
+            assert_eq!(a, b);
         }
     }
 }
