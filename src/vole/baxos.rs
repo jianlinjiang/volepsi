@@ -492,11 +492,11 @@ mod tests {
                 for i in 0..100 {
                     println!("{:?}", p[i]);
                 }
-                
+
                 baxos.decode(&items, &mut values2, &p, 1);
 
                 println!("===============");
-                for i in values2.len()-100..values2.len() {
+                for i in values2.len() - 100..values2.len() {
                     println!("{:?}", values2[i]);
                 }
                 // for i in 0..100 {
@@ -505,7 +505,7 @@ mod tests {
                 assert_eq!(values2.len(), values.len());
                 // assert_eq!(values2, values);
                 let mut i = 0;
-                let mut count  = 0;
+                let mut count = 0;
                 values2.iter().zip(values.iter()).for_each(|(v1, v2)| {
                     if *v1 != *v2 {
                         // println!("{}", i);

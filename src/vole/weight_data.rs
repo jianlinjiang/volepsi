@@ -62,18 +62,17 @@ impl<'a> WeightData {
 
         let mut weight_sets: Vec<Option<*mut WeightNode>> = vec![None; 200];
         let start: *const WeightNode = &nodes[0];
-        for i in 0..weights.len() {
-            let mut node: &mut WeightNode = &mut nodes[i];
-            node.weight = weights[i];
+
+        weights.iter().enumerate().for_each(|(idx, &weight)| {
+            if weight >= weight_sets.len() {
+                panic!("something went wrong, maybe duplicate inputs.");
+            }
+            let mut node = &mut nodes[idx];
+            node.weight = weight;
             node.prev_node = NULL_NODE;
             node.next_node = NULL_NODE;
 
-            if node.weight as usize >= weight_sets.len() {
-                panic!("something went wrong, maybe duplicate inputs.");
-            }
-
-            let ws = &weight_sets[node.weight as usize];
-
+            let ws = &weight_sets[weight as usize];
             if ws.is_some() {
                 let w: *mut WeightNode = ws.unwrap();
                 unsafe {
@@ -82,16 +81,43 @@ impl<'a> WeightData {
                     node.next_node = idx_of(w, start) as usize;
                 }
             }
-            weight_sets[node.weight as usize] = Some(node as *mut WeightNode);
+            weight_sets[weight] = Some(node as *mut WeightNode);
+        });
+        while weight_sets.last().is_none() {
+            weight_sets.pop();
         }
-        let mut i = weight_sets.len() - 1;
-        loop {
-            if weight_sets[i].is_some() {
-                weight_sets.resize(i + 1, None);
-                break;
-            }
-            i = i - 1;
-        }
+
+
+        // for i in 0..weights.len() {
+        //     let mut node: &mut WeightNode = &mut nodes[i];
+        //     node.weight = weights[i];
+        //     node.prev_node = NULL_NODE;
+        //     node.next_node = NULL_NODE;
+
+        //     if node.weight as usize >= weight_sets.len() {
+        //         panic!("something went wrong, maybe duplicate inputs.");
+        //     }
+
+        //     let ws = &weight_sets[node.weight as usize];
+
+        //     if ws.is_some() {
+        //         let w: *mut WeightNode = ws.unwrap();
+        //         unsafe {
+        //             assert_eq!((*w).prev_node, NULL_NODE);
+        //             (*w).prev_node = idx_of(node, start) as usize;
+        //             node.next_node = idx_of(w, start) as usize;
+        //         }
+        //     }
+        //     weight_sets[node.weight as usize] = Some(node as *mut WeightNode);
+        // }
+        // let mut i = weight_sets.len() - 1;
+        // loop {
+        //     if weight_sets[i].is_some() {
+        //         weight_sets.resize(i + 1, None);
+        //         break;
+        //     }
+        //     i = i - 1;
+        // }
         WeightData { nodes, weight_sets }
     }
 

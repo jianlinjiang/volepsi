@@ -20,6 +20,4 @@ extern "C" {
             delete p;
         }
     }
-
-
 }
