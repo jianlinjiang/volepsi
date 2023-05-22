@@ -1,16 +1,12 @@
 use crate::vole::weight_data::WeightNode;
-
+use log::debug;
 use super::block::{gf128_inv, Block, ONE_BLOCK, ZERO_BLOCK};
 use super::matrix::Matrix;
 use super::prng::Prng;
-use super::utils::round_up_to;
 use super::weight_data::WeightData;
 use core::panic;
-use log::{error, info};
-use rand::Rng;
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet};
 use std::ffi::c_void;
-
 const PAXOS_BUILD_ROW_SIZE: usize = 32;
 
 #[link(name = "rcrypto")]
@@ -207,7 +203,7 @@ pub struct Paxos {
     pub hasher: PaxosHash,
     pub dense: Vec<Block>,
     pub rows: Matrix<usize>,   // 稀疏矩阵每行只有weight个元素为1，记录1的列数
-    pub cols: Vec<Vec<usize>>, // 记录每列有多少个元素
+    pub cols: Vec<Vec<usize>>, // 记录每列有哪些行为1
     pub col_backing: Vec<usize>, // 用来做备份的记录
     pub weight_sets: Option<WeightData>,
 }
@@ -258,7 +254,7 @@ impl Paxos {
 
         let mut col_weights = vec![0; self.params.sparse_size];
 
-        // check inputs is unique, TODO: Remove when release build
+        // TODO: Remove when release build
         {
             let mut input_set: BTreeSet<Block> = BTreeSet::new();
             for i in inputs {
@@ -295,7 +291,6 @@ impl Paxos {
                 self.hasher
                     .hash_build_row1_pointer(input, row as *mut usize, dense);
             });
-
         self.rows.storage.iter().for_each(|&x| {
             col_weights[x] += 1;
         });
@@ -313,7 +308,6 @@ impl Paxos {
         assert_eq!(self.items_num, values.len());
         let mut main_rows: Vec<usize> = Vec::with_capacity(self.items_num);
         let mut main_cols: Vec<usize> = Vec::with_capacity(self.items_num);
-
         let mut gap_rows: Vec<[usize; 2]> = Vec::new();
 
         self.triangulate(&mut main_rows, &mut main_cols, &mut gap_rows);
@@ -335,7 +329,7 @@ impl Paxos {
 
         let mut rows = Matrix::new(PAXOS_BUILD_ROW_SIZE, self.params.weight, 0usize);
 
-        let mut dense = vec![Block::from_i64(0, 0); PAXOS_BUILD_ROW_SIZE];
+        let mut dense = vec![*ZERO_BLOCK; PAXOS_BUILD_ROW_SIZE];
 
         let mut i: usize = 0;
         while i < main {
@@ -369,6 +363,11 @@ impl Paxos {
         values: &mut [Block],
         pp: &[Block],
     ) {
+        assert_eq!(rows.len(), 32 * 3);
+        assert_eq!(dense.len(), 32);
+        assert_eq!(values.len(), 32);
+        assert_eq!(pp[self.params.sparse_size..].len(), self.params.dense_size);
+
         let weight = self.params.weight;
         for j in 0..4 {
             let rows = &rows[j * 8 * weight..];
@@ -393,27 +392,36 @@ impl Paxos {
         let dense_size = self.params.dense_size;
         let p2: &[Block] = &pp[sparse_size..];
         let mut xx: [Block; 32] = [Block::from_i64(0, 0); 32];
-        xx.iter_mut().enumerate().for_each(|(i, x)| {
-            *x = dense[i];
+        xx.copy_from_slice(dense);
+        // for k in 0..4 {
+        //     let values = &mut values[k * 8..];
+        //     let x = &mut xx[k * 8..];
+        //     values
+
+
+        //     values[0..8].iter_mut().enumerate().for_each(|(i, vv)| {
+        //         *vv = *vv ^ (p2[0].gf128_mul_reduce(&x[i]));
+        //     });
+        // }
+
+        values.iter_mut().zip(xx).for_each(|(vv, x)| {
+            *vv = *vv ^ p2[0].gf128_mul_reduce(&x);
         });
-        for k in 0..4 {
-            let values = &mut values[k * 8..];
-            let x = &mut xx[k * 8..];
-            values[0..8].iter_mut().enumerate().for_each(|(i, vv)| {
-                *vv = *vv ^ (p2[0].gf128_mul_reduce(&x[i]));
-            });
-        }
 
         for j in 1..dense_size {
-            for k in 0..4 {
-                let x = &mut xx[k * 8..];
-                let dense = &dense[k * 8..];
-                let values = &mut values[k * 8..];
-                values[0..8].iter_mut().enumerate().for_each(|(i, vv)| {
-                    x[i] = x[i].gf128_mul_reduce(&dense[i]);
-                    *vv = *vv ^ (p2[j].gf128_mul_reduce(&x[i]));
-                });
-            }
+            values.iter_mut().zip(xx.iter_mut()).zip(dense.iter()).for_each(|((vv, x), d)| {
+                *x = x.gf128_mul_reduce(d);
+                *vv = *vv ^ (p2[j].gf128_mul_reduce(x));
+            });        
+            // for k in 0..4 {
+            //     let x = &mut xx[k * 8..];
+            //     let dense = &dense[k * 8..];
+            //     let values = &mut values[k * 8..];
+            //     values[0..8].iter_mut().enumerate().for_each(|(i, vv)| {
+            //         x[i] = x[i].gf128_mul_reduce(&dense[i]);
+            //         *vv = *vv ^ (p2[j].gf128_mul_reduce(&x[i]));
+            //     });
+            // }
         }
     }
 
@@ -444,13 +452,14 @@ impl Paxos {
         let g = gap_rows.len();
         let p2 = &mut p[self.params.sparse_size..];
 
+        debug!("g: {}, dense_size: {}", g, self.params.dense_size);
         assert!(g <= self.params.dense_size);
 
         if g > 0 {
             let fcinv: FCInv = self.get_fcinv(main_rows, main_cols, gap_rows);
             let size = g;
 
-            let mut EE: Matrix<Block> = Matrix::new(size, size, *ZERO_BLOCK);
+            let mut ee: Matrix<Block> = Matrix::new(size, size, *ZERO_BLOCK);
 
             let mut xx = vec![Block::from_i64(0, 0); size];
 
@@ -459,41 +468,41 @@ impl Paxos {
             for i in 0..g {
                 let e = self.dense[gap_rows[i][0]];
                 let mut ej = e;
-                EE[(i, 0)] = e;
+                ee[(i, 0)] = e;
                 for j in 1..size {
                     ej = ej.gf128_mul_reduce(&e);
-                    EE[(i, j)] = ej;
+                    ee[(i, j)] = ej;
                 }
                 xx[i] = x[gap_rows[i][0]];
                 fcinv.mtx[i].iter().for_each(|&j: &usize| {
                     xx[i] = xx[i] ^ x[j];
                     let fcb = self.dense[j];
                     let mut fcbk = fcb;
-                    EE[(i, 0)] = EE[(i, 0)] ^ fcbk;
+                    ee[(i, 0)] = ee[(i, 0)] ^ fcbk;
                     for k in 1..size {
                         fcbk = fcbk.gf128_mul_reduce(&fcb);
-                        EE[(i, k)] = EE[(i, k)] ^ fcbk;
+                        ee[(i, k)] = ee[(i, k)] ^ fcbk;
                     }
                 });
             }
 
             // PRNG is None, TODO
 
-            EE = gf128_matrix_inv(EE);
+            ee = gf128_matrix_inv(ee);
 
-            assert!(EE.capacity != 0);
+            assert!(ee.capacity != 0);
 
             for i in 0..size {
                 let pp = &mut p2[i];
                 for j in 0..size {
-                    *pp = (*pp) ^ (xx[j].gf128_mul_reduce(&EE[(i, j)]));
+                    *pp = (*pp) ^ (xx[j].gf128_mul_reduce(&ee[(i, j)]));
                 }
             }
         }
 
         let do_dense = g != 0;
 
-        let mut y = Block::from_i64(0, 0);
+        let mut y = *ZERO_BLOCK;
 
         if self.params.weight == 3 {
             main_rows
@@ -504,23 +513,19 @@ impl Paxos {
                     y = x[i];
 
                     let row = self.rows.row_data(i, 1);
-                    let cc0 = row[0];
-                    let cc1 = row[1];
-                    let cc2 = row[2];
-
-                    y = y ^ p[cc0];
-                    y = y ^ p[cc1];
-                    y = y ^ p[cc2];
-
+                    row.iter().for_each(|&cc| {
+                        y = y ^ p [cc]
+                    });
+                    
                     if do_dense {
                         let d = self.dense[i];
                         let mut x = d;
                         y = y ^ p[self.params.sparse_size].gf128_mul_reduce(&x);
 
-                        for i in 1..self.params.dense_size {
+                        p[self.params.sparse_size+1..].iter().for_each(|pp| {
                             x = x.gf128_mul_reduce(&d);
-                            y = y ^ p[self.params.sparse_size + i].gf128_mul_reduce(&x);
-                        }
+                            y = y ^ pp.gf128_mul_reduce(&x);
+                        });
                     }
                     p[c] = y;
                 });
@@ -541,6 +546,9 @@ impl Paxos {
         let invert_row_idx = |i: usize| m - i - 1;
         for i in 0..gap_rows.len() {
             if self.rows.row_data(gap_rows[i][0], 1) == self.rows.row_data(gap_rows[i][1], 1) {
+                // special/common case where FC^-1 [i] = 0000100000
+				// where the 1 is at position gapRows[i][1]. This code is
+				// used to speed up this common case.
                 ret.mtx[i].push(gap_rows[i][1]);
             } else {
                 if col_mapping.len() == 0 {
@@ -591,29 +599,28 @@ impl Paxos {
 
         let mut row_set = vec![0u8; self.items_num];
         let weight_sets = self.weight_sets.as_mut().unwrap();
-        while weight_sets.weight_sets.len() > 1 {
-            let col = weight_sets.get_min_weightnode();
-            weight_sets.pop_node(col);
+        while weight_sets.weight_sets.len() > 1 {   // triangulate 各个权重的列表，每个node代表列号
+            let col = weight_sets.get_min_weightnode(); // 最小权重的列
+            weight_sets.pop_node(col);  
 
             unsafe {
+                let col_index: usize = weight_sets.idx_of(&(*col));  // 列号
                 (*col).weight = 0;
-                let col_index = weight_sets.idx_of(&(*col));
                 let mut first: bool = true;
-                self.cols[col_index].iter().for_each(|&row_idx| {
-                    if row_set[row_idx] == 0 {
-                        row_set[row_idx] = 1;
-                        self.rows.row_data(row_idx, 1).iter().for_each(|&col_idx2| {
+                self.cols[col_index].iter().for_each(|&row_idx| {   
+                    if row_set[row_idx] == 0 {  //每一行是否处理过
+                        row_set[row_idx] = 1;   //   
+                        self.rows.row_data(row_idx, 1).iter().for_each(|&col_idx2| {    //每行为1的列号
                             let node: *mut WeightNode =
                                 &mut weight_sets.nodes[col_idx2] as *mut WeightNode;
 
                             if (*node).weight != 0 {
-                                weight_sets.pop_node(node as *mut WeightNode);
-                                (*node).weight -= 1;
+                                weight_sets.pop_node(node as *mut WeightNode);  // remove this row
+                                (*node).weight -= 1;    // 把这个节点弹出后再压入，将
                                 weight_sets.push_node(node);
                                 // TODO prefetch next column
                             }
                         });
-
                         if first {
                             main_col.push(col_index);
                             main_row.push(row_idx);
@@ -631,21 +638,22 @@ impl Paxos {
 
     pub fn rebuild_columns(&mut self, col_weights: &[usize], total_weight: usize) {
         assert_eq!(self.col_backing.len(), total_weight);
-
-        // TODO: remove when release
-        let mut col_sum: usize = 0;
-        col_weights.iter().for_each(|x| {
-            col_sum += x;
-        });
-        assert_eq!(col_sum, total_weight);
-
-        if self.rows.cols() == 3 {
+        // TODO: Remove when release build
+        {
+            let mut col_sum: usize = 0;
+            col_weights.iter().for_each(|x| {
+                col_sum += x;
+            });
+            assert_eq!(col_sum, total_weight);
+        }
+        // self cols 存储
+        if self.rows.cols() == 3 { 
             for i in 0..self.items_num {
                 // rows
-                let row = self.rows.row_data(i, 1);
-                self.cols[row[0]].push(i);
-                self.cols[row[1]].push(i);
-                self.cols[row[2]].push(i);
+                let row = self.rows.row_data(i, 1); // row 代表哪几列为1
+                row.iter().for_each(|&c| {
+                    self.cols[c].push(i);    // 第c列的第i行为1
+                });
             }
             // copy cols to colbacking
             let mut col_backing_start = 0;
@@ -666,8 +674,6 @@ impl Paxos {
         &mut self,
         rows: &Matrix<usize>,
         dense: &[Block],
-        // cols: &Vec<Vec<usize>>,
-        // col_backing: &[usize],
         col_weights: &[usize],
     ) {
         // assert_eq!(rows.rows(), self.items_num);
@@ -675,19 +681,8 @@ impl Paxos {
         assert_eq!(rows.cols(), self.params.weight);
         // assert_eq!(col_backing.len(), self.items_num * self.params.weight);
         assert_eq!(col_weights.len(), self.params.sparse_size);
-        self.rows
-            .storage
-            .iter_mut()
-            .zip(rows.storage.iter())
-            .for_each(|(self_row, &row)| {
-                *self_row = row;
-            });
-        self.dense
-            .iter_mut()
-            .zip(dense.iter())
-            .for_each(|(self_dense, &d)| {
-                *self_dense = d;
-            });
+        self.rows.storage.copy_from_slice(&rows.storage);
+        self.dense.copy_from_slice(&dense);
         self.rebuild_columns(col_weights, self.params.weight * self.items_num);
         assert!(self.weight_sets.is_none());
         self.weight_sets = Some(WeightData::init(col_weights))
