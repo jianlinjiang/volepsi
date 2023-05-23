@@ -15,6 +15,7 @@ use std::collections::HashMap;
 use std::ffi::c_void;
 use std::net::{IpAddr, SocketAddr};
 use std::thread;
+use log::info;
 #[derive(Debug)]
 pub struct Receiver {
     // origin_input: Vec<usize>,
@@ -70,7 +71,7 @@ impl Receiver {
                 SocketAddr::new(self.sender_ip, self.sender_port),
                 Bytes::from(
                     bincode::serialize(&RequestType::BaxosSeed([
-                        seed.get(1) as i64,
+                        seed.get(0) as i64,
                         seed.get(1) as i64,
                     ]))
                     .unwrap(),
@@ -90,7 +91,7 @@ impl Receiver {
         });
 
         let mut self_hash = vec![*ZERO_BLOCK; inputs.len()];
-
+        // inputs values = hash(inputs, fixed_key)
         unsafe {
             fixed_key_hash_blocks(
                 inputs.as_ptr() as *const c_void,
@@ -108,7 +109,7 @@ impl Receiver {
             .zip(&self.c)
             .map(|(pp, cc)| {
                 *pp = *pp ^ *cc;
-                [pp.get(1) as i64, pp.get(0) as i64]
+                [pp.get(0) as i64, pp.get(1) as i64]
             })
             .collect();
         // send pp
@@ -121,22 +122,24 @@ impl Receiver {
 
         let mut outputs = vec![*ZERO_BLOCK; inputs.len()];
         baxos.decode(inputs, &mut outputs, &self.a, 1);
+        
 
+        let mut outputs_res = vec![*ZERO_BLOCK; inputs.len()];
         unsafe {
             fixed_key_hash_blocks(
                 outputs.as_ptr() as *const c_void,
                 outputs.len(),
-                outputs.as_mut_ptr() as *mut c_void,
+                outputs_res.as_mut_ptr() as *mut c_void,
             );
         }
 
         let mut mask = *ZERO_BLOCK;
-        unsafe {
-            set_block_mask(&mut mask as *mut Block as *mut c_void, mask_size);
-        }
-        let mut map: HashMap<Block, usize> = HashMap::with_capacity(self_hash.len());
-        self_hash.iter().enumerate().for_each(|(i, h)| {
-            if map.insert(*h & mask, i).is_some() {
+        // unsafe {
+        //     set_block_mask(&mut mask as *mut Block as *mut c_void, mask_size);
+        // }
+        let mut map: HashMap<Block, usize> = HashMap::with_capacity(outputs_res.len());
+        outputs_res.iter().enumerate().for_each(|(i, h)| {
+            if map.insert(*h, i).is_some() {
                 panic!("conflicts");
             }
         });
@@ -149,6 +152,7 @@ impl Receiver {
                 Bytes::from(bincode::serialize(&RequestType::RequestHash).unwrap()),
             )
             .await;
+        let mask_size = 16;
         match ret.await {
             Ok(data) => {
                 let peer_hashes: Vec<u8> = bincode::deserialize(&data).unwrap();

@@ -182,8 +182,10 @@ impl Connection {
         // This buffer keeps all messages and handlers that we have successfully transmitted but for
         // which we are still waiting to receive an ACK.
         let mut pending_replies = VecDeque::new();
-
-        let (mut writer, mut reader) = Framed::new(stream, LengthDelimitedCodec::new()).split();
+        let mut codec = LengthDelimitedCodec::new();
+        codec.set_max_frame_length(24 * 1024 * 1024);
+                
+        let (mut writer, mut reader) = Framed::new(stream, codec).split();
         let error = 'connection: loop {
             // Try to send all messages of the buffer.
             while let Some((data, handler)) = self.buffer.pop_front() {

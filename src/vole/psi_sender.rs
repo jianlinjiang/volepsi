@@ -10,18 +10,16 @@ use futures::SinkExt;
 use libc::memcpy;
 use log::error;
 use network::{MessageHandler, Receiver as NetworkReceiver, Writer};
-use rand::{thread_rng, Rng};
+use rand::{thread_rng};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::ffi::c_void;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::sync::Arc;
 use std::thread;
 use tokio::sync::mpsc::{channel, Receiver as MpscReceiver, Sender as MpscSender};
-use tokio::sync::oneshot::Receiver as OneshotReceiver;
-
+use log::info;
 #[derive(Clone, Serialize, Deserialize)]
 pub enum RequestType {
     BaxosSeed([i64; 2]),
@@ -49,7 +47,7 @@ impl MessageHandler for SenderHandler {
                 self.channel_sender
                     .send(
                         pps.iter()
-                            .map(|[b1, b0]| Block::from_i64(*b1, *b0))
+                            .map(|[b0, b1]| Block::from_i64(*b1, *b0))
                             .collect(),
                     )
                     .await?;
@@ -120,7 +118,7 @@ impl Sender {
         self.receiver_size = inputs.len();
         self.sender_size = self.receiver_size;
 
-        let mask_size: usize = ((self.ssp as f64
+        let mut mask_size: usize = ((self.ssp as f64
             + ((self.sender_size * self.receiver_size) as f64)
                 .log2()
                 .ceil())
@@ -130,6 +128,7 @@ impl Sender {
 
         // send
         let mut baxos = Baxos::new(self.receiver_size, self.bin_size, 3, self.ssp, *ZERO_BLOCK);
+        
         let baxos_size = baxos.size();
         self.d = self.prng.get_block();
         let delta: [u64; 2] = [self.d.get(0), self.d.get(1)];
@@ -141,19 +140,21 @@ impl Sender {
             vole_sender.get_b(baxos_size)
         });
 
+        
+        
         // receive paxos seed
         let seed = self.channel_recv.recv().await.unwrap();
+        info!("receiver seed");
         assert_eq!(seed.len(), 1);
         baxos.seed = seed[0];
         self.baxos = Some(baxos);
 
         // wait vole
         self.b = handler.join().unwrap();
-
-        // let mut pp = vec![*ZERO_BLOCK; baxos_size];
+        info!("vole finish");
         let pp: Vec<Block> = self.channel_recv.recv().await.unwrap();
         assert_eq!(pp.len(), baxos_size);
-
+        info!("receive pp");
         // receive from reveiver with pp
 
         assert_eq!(self.b.len(), pp.len());
@@ -167,7 +168,8 @@ impl Sender {
         let mut hashes = vec![*ZERO_BLOCK; inputs.len()];
 
         self.eval(inputs, &mut hashes);
-
+        info!("eval hashes");
+        mask_size = 16;
         let mut res = vec![0u8; hashes.len() * mask_size];
         if compress {
             unsafe {
@@ -184,8 +186,9 @@ impl Sender {
         }
         // sender to receivers
         // network sender
-        assert_eq!(self.channel_recv.recv().await.unwrap().len(), 1);
+        assert_eq!(self.channel_recv.recv().await.unwrap().len(), 0);
         self.cross_sender.send(res).unwrap();
+        info!("send res");
         // network send hashes
     }
 

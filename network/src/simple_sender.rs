@@ -99,7 +99,11 @@ impl Connection {
     async fn run(&mut self) {
         // Try to connect to the peer.
         let (mut writer, mut reader) = match TcpStream::connect(self.address).await {
-            Ok(stream) => Framed::new(stream, LengthDelimitedCodec::new()).split(),
+            Ok(stream) => {
+                let mut codec = LengthDelimitedCodec::new();
+                codec.set_max_frame_length(24 * 1024 * 1024);
+                Framed::new(stream, codec).split()
+            },
             Err(e) => {
                 warn!(
                     "{}",

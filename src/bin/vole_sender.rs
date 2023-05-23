@@ -12,7 +12,9 @@ async fn main() {
     let start = Instant::now();
     let sender = SilentVoleSender::new(address, &mut rng);
     let delta = [rng.next_u64(), rng.next_u64()];
+    let n = 1 << 20;
     sender.init(delta, 1 << 20);
+    let b = sender.get_b(n);
     let duration = start.elapsed();
     info!("Time elapsed is: {:?}", duration);
 }

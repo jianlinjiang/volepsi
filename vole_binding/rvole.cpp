@@ -110,32 +110,19 @@ extern "C" {
         if (sender.get() == NULL) {
             throw std::runtime_error("sender is null" LOCATION);
         }
-        block d(delta[0], delta[1]);
-        std::unique_ptr<block[]> backing(new block[num_ots]);
-		span<block> msgs(backing.get(), num_ots);
-        osuCrypto::cp::sync_wait(sender->genSilentBaseOts(prng, chl));
-        osuCrypto::cp::sync_wait(sync(chl, Role::Sender));
-        osuCrypto::cp::sync_wait(sender->silentSend(d, msgs, prng, chl));
-        osuCrypto::cp::sync_wait(chl.flush());
+        block d(delta[1], delta[0]);
+        osuCrypto::cp::sync_wait(sender->silentSendInplace(d, num_ots, prng, chl));
     }
 
     void silent_receive_inplace(uint64_t num_ots) {
         if (receiver.get() == NULL) {
             throw std::runtime_error("receiver is null" LOCATION);
         }
-        // receiver 
-        std::unique_ptr<block[]> backing0(new block[num_ots]);
-        std::unique_ptr<block[]> backing1(new block[num_ots]);
-        span<block> choice(backing0.get(), num_ots);
-        span<block> msgs(backing1.get(), num_ots);
-
-        osuCrypto::cp::sync_wait(receiver->genSilentBaseOts(prng, chl));
-        osuCrypto::cp::sync_wait(sync(chl, Role::Receiver));
-        osuCrypto::cp::sync_wait(receiver->silentReceive(choice, msgs, prng, chl));
-        osuCrypto::cp::sync_wait(chl.flush());
+        osuCrypto::cp::sync_wait(receiver->silentReceiveInplace(num_ots, prng, chl));
     }
 
     void get_sender_b(void* b, size_t n) {
+        std::cout<<sender->mB.size()<<std::endl;
         if (n != sender->mB.size()) {
             throw std::runtime_error("size doesn't match" LOCATION);
         }

@@ -1,12 +1,9 @@
-use super::block::{gf128_inv, Block, ONE_BLOCK, ZERO_BLOCK};
+use super::block::{Block, ZERO_BLOCK};
 use super::matrix::Matrix;
 use super::paxos::{Paxos, PaxosParam};
 use crate::vole::aes::Aes;
 use libc::memmove;
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
 use std::ffi::c_void;
-use std::slice::from_raw_parts_mut;
 
 #[link(name = "rcrypto")]
 extern "C" {
@@ -122,14 +119,11 @@ impl Baxos {
 
                     for k in 0..BATCH_SIZE {
                         let bin_idx = bin_idxs[k];
-
                         let bs = bin_sizes[bin_idx];
                         bin_sizes[bin_idx] += 1;
-
                         set_input_mapping(thread_idx, bin_idx, bs, in_idx);
                         set_values(thread_idx, bin_idx, bs, values[in_idx]);
                         set_hashes(thread_idx, bin_idx, bs, hashes[k]);
-
                         in_idx += 1;
                     }
                     i += BATCH_SIZE;
@@ -141,7 +135,6 @@ impl Baxos {
                     let bs = bin_sizes[bin_idx];
                     bin_sizes[bin_idx] += 1;
                     assert!(bs < per_thread_max_bins);
-
                     set_input_mapping(thread_idx, bin_idx, bs, in_idx);
                     set_values(thread_idx, bin_idx, bs, values[in_idx]);
                     set_hashes(thread_idx, bin_idx, bs, hash);
@@ -399,9 +392,6 @@ impl Baxos {
 
 #[cfg(test)]
 mod tests {
-    #![allow(arithmetic_overflow)]
-    use core::panic;
-
     use super::super::block::ZERO_BLOCK;
     use super::super::prng::Prng;
     use super::*;
@@ -412,13 +402,12 @@ mod tests {
     fn baxos_test() {
         let n: usize = 1 << 20;
         // let b = n / (1 << 14);
-        let b = (1 << 14);
+        let b = 1 << 14;
         let w: usize = 3;
         let s = 0usize;
         let t = 1usize;
-        let nt: usize = 8usize;
         {
-            for tt in 0..t {
+            for _tt in 0..t {
                 let prng = Prng::new(Block::from_i64(0 as i64, s as i64));
                 let mut baxos = Baxos::new(n, b, w, 40, prng.get_blocks(1)[0]);
                 println!("{:?}", baxos);
@@ -434,23 +423,12 @@ mod tests {
                     .open("result_tmp.txt")
                     .unwrap();
                 let mut file = BufWriter::new(file);
-                // for pp in &p {
-                //     file.write(format!("{:?}\n", pp).as_bytes()).unwrap();
-                // }
 
                 baxos.decode(&items, &mut values2, &p, 1);
                 for pp in &values2 {
                     file.write(format!("{:?}\n", pp).as_bytes()).unwrap();
                 }
-                // println!("===============");
-                // for i in values2.len() - 100..values2.len() {
-                //     println!("{:?}", values2[i]);
-                // }
-                // for i in 0..100 {
-                //     println!("{:?}", values2[i]);
-                // }
                 assert_eq!(values2.len(), values.len());
-                // assert_eq!(values2, values);
                 let mut i = 0;
                 let mut count = 0;
                 values2.iter().zip(values.iter()).for_each(|(v1, v2)| {

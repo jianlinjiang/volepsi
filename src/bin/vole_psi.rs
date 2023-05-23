@@ -64,8 +64,7 @@ async fn main() {
     let _ = env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
     let args = Args::parse();
     let role: Role =
-        Role::try_from(args.role).expect("can't to parse role! Only 0 and 1 are valid. Role 0 holds the database and role 1 executes the query.");
-    // let file = std::fs::File::open("/tmp/a.log").unwrap();
+        Role::try_from(args.role).expect("can't to parse role! Only 0 and 1 are valid. Role 0 is the sender and role 1 is the receiver.");
     let file = File::options()
         .create(true)
         .write(true)
@@ -96,6 +95,9 @@ async fn main() {
                 })
                 .collect();
             sender.run(&inputs).await;
+            loop {
+                
+            }
         }
 
         Role::Receiver => {

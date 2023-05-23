@@ -63,7 +63,9 @@ impl<Handler: MessageHandler> Receiver<Handler> {
     /// using the provided handler.
     async fn spawn_runner(socket: TcpStream, peer: SocketAddr, handler: Handler) {
         tokio::spawn(async move {
-            let transport = Framed::new(socket, LengthDelimitedCodec::new());
+            let mut codec = LengthDelimitedCodec::new();
+            codec.set_max_frame_length(24 * 1024 * 1024);
+            let transport = Framed::new(socket, codec);
             let (mut writer, mut reader) = transport.split();
             while let Some(frame) = reader.next().await {
                 match frame.map_err(|e| NetworkError::FailedToReceiveMessage(peer, e)) {
