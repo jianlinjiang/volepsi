@@ -1,11 +1,11 @@
-use crate::vole::weight_data::WeightNode;
-use log::debug;
 use super::block::{gf128_inv, Block, ONE_BLOCK, ZERO_BLOCK};
 use super::matrix::Matrix;
 use super::prng::Prng;
 use super::weight_data::WeightData;
+use crate::vole::weight_data::WeightNode;
 use core::panic;
-use std::collections::{BTreeSet};
+use log::debug;
+use std::collections::BTreeSet;
 use std::ffi::c_void;
 const PAXOS_BUILD_ROW_SIZE: usize = 32;
 
@@ -271,7 +271,7 @@ impl Paxos {
             .zip(inputs.iter().step_by(PAXOS_BUILD_ROW_SIZE))
             .for_each(|((row, dense), input)| {
                 if i + PAXOS_BUILD_ROW_SIZE > inputs.len() {
-                    return ;
+                    return;
                 }
                 self.hasher.hash_build_row32_pointer(
                     input as *const Block,
@@ -280,8 +280,14 @@ impl Paxos {
                 );
                 i += PAXOS_BUILD_ROW_SIZE;
             });
-        assert_eq!(self.rows.storage[i * self.params.weight..].len() / self.params.weight, self.dense[i..].len());
-        assert_eq!(self.rows.storage[i * self.params.weight..].len() / self.params.weight, inputs[i..].len());
+        assert_eq!(
+            self.rows.storage[i * self.params.weight..].len() / self.params.weight,
+            self.dense[i..].len()
+        );
+        assert_eq!(
+            self.rows.storage[i * self.params.weight..].len() / self.params.weight,
+            inputs[i..].len()
+        );
         self.rows.storage[i * self.params.weight..]
             .iter_mut()
             .step_by(self.params.weight)
@@ -398,7 +404,6 @@ impl Paxos {
         //     let x = &mut xx[k * 8..];
         //     values
 
-
         //     values[0..8].iter_mut().enumerate().for_each(|(i, vv)| {
         //         *vv = *vv ^ (p2[0].gf128_mul_reduce(&x[i]));
         //     });
@@ -409,10 +414,14 @@ impl Paxos {
         });
 
         for j in 1..dense_size {
-            values.iter_mut().zip(xx.iter_mut()).zip(dense.iter()).for_each(|((vv, x), d)| {
-                *x = x.gf128_mul_reduce(d);
-                *vv = *vv ^ (p2[j].gf128_mul_reduce(x));
-            });        
+            values
+                .iter_mut()
+                .zip(xx.iter_mut())
+                .zip(dense.iter())
+                .for_each(|((vv, x), d)| {
+                    *x = x.gf128_mul_reduce(d);
+                    *vv = *vv ^ (p2[j].gf128_mul_reduce(x));
+                });
             // for k in 0..4 {
             //     let x = &mut xx[k * 8..];
             //     let dense = &dense[k * 8..];
@@ -513,16 +522,14 @@ impl Paxos {
                     y = x[i];
 
                     let row = self.rows.row_data(i, 1);
-                    row.iter().for_each(|&cc| {
-                        y = y ^ p [cc]
-                    });
-                    
+                    row.iter().for_each(|&cc| y = y ^ p[cc]);
+
                     if do_dense {
                         let d = self.dense[i];
                         let mut x = d;
                         y = y ^ p[self.params.sparse_size].gf128_mul_reduce(&x);
 
-                        p[self.params.sparse_size+1..].iter().for_each(|pp| {
+                        p[self.params.sparse_size + 1..].iter().for_each(|pp| {
                             x = x.gf128_mul_reduce(&d);
                             y = y ^ pp.gf128_mul_reduce(&x);
                         });
@@ -547,8 +554,8 @@ impl Paxos {
         for i in 0..gap_rows.len() {
             if self.rows.row_data(gap_rows[i][0], 1) == self.rows.row_data(gap_rows[i][1], 1) {
                 // special/common case where FC^-1 [i] = 0000100000
-				// where the 1 is at position gapRows[i][1]. This code is
-				// used to speed up this common case.
+                // where the 1 is at position gapRows[i][1]. This code is
+                // used to speed up this common case.
                 ret.mtx[i].push(gap_rows[i][1]);
             } else {
                 if col_mapping.len() == 0 {
@@ -599,24 +606,27 @@ impl Paxos {
 
         let mut row_set = vec![0u8; self.items_num];
         let weight_sets = self.weight_sets.as_mut().unwrap();
-        while weight_sets.weight_sets.len() > 1 {   // triangulate 各个权重的列表，每个node代表列号
+        while weight_sets.weight_sets.len() > 1 {
+            // triangulate 各个权重的列表，每个node代表列号
             let col = weight_sets.get_min_weightnode(); // 最小权重的列
-            weight_sets.pop_node(col);  
+            weight_sets.pop_node(col);
 
             unsafe {
-                let col_index: usize = weight_sets.idx_of(&(*col));  // 列号
+                let col_index: usize = weight_sets.idx_of(&(*col)); // 列号
                 (*col).weight = 0;
                 let mut first: bool = true;
-                self.cols[col_index].iter().for_each(|&row_idx| {   
-                    if row_set[row_idx] == 0 {  //每一行是否处理过
-                        row_set[row_idx] = 1;   //   
-                        self.rows.row_data(row_idx, 1).iter().for_each(|&col_idx2| {    //每行为1的列号
+                self.cols[col_index].iter().for_each(|&row_idx| {
+                    if row_set[row_idx] == 0 {
+                        //每一行是否处理过
+                        row_set[row_idx] = 1; //
+                        self.rows.row_data(row_idx, 1).iter().for_each(|&col_idx2| {
+                            //每行为1的列号
                             let node: *mut WeightNode =
                                 &mut weight_sets.nodes[col_idx2] as *mut WeightNode;
 
                             if (*node).weight != 0 {
-                                weight_sets.pop_node(node as *mut WeightNode);  // remove this row
-                                (*node).weight -= 1;    // 把这个节点弹出后再压入，将
+                                weight_sets.pop_node(node as *mut WeightNode); // remove this row
+                                (*node).weight -= 1; // 把这个节点弹出后再压入，将
                                 weight_sets.push_node(node);
                                 // TODO prefetch next column
                             }
@@ -647,12 +657,12 @@ impl Paxos {
             assert_eq!(col_sum, total_weight);
         }
         // self cols 存储
-        if self.rows.cols() == 3 { 
+        if self.rows.cols() == 3 {
             for i in 0..self.items_num {
                 // rows
                 let row = self.rows.row_data(i, 1); // row 代表哪几列为1
                 row.iter().for_each(|&c| {
-                    self.cols[c].push(i);    // 第c列的第i行为1
+                    self.cols[c].push(i); // 第c列的第i行为1
                 });
             }
             // copy cols to colbacking
@@ -670,12 +680,7 @@ impl Paxos {
         }
     }
 
-    pub fn set_mul_inputs(
-        &mut self,
-        rows: &Matrix<usize>,
-        dense: &[Block],
-        col_weights: &[usize],
-    ) {
+    pub fn set_mul_inputs(&mut self, rows: &Matrix<usize>, dense: &[Block], col_weights: &[usize]) {
         // assert_eq!(rows.rows(), self.items_num);
         assert_eq!(dense.len(), self.items_num);
         assert_eq!(rows.cols(), self.params.weight);

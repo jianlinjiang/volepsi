@@ -59,70 +59,50 @@ impl Baxos {
         assert_eq!(output.len(), self.size());
         const BATCH_SIZE: usize = 32usize;
         let total_bins = self.bins * threads;
-        // let items_per_thread = (self.items + threads - 1) / threads;
+        let items_per_thread = (self.items + threads - 1) / threads;
 
-        let per_thread_max_bins = self.items_per_bin + 10;
-
+        // let per_thread_max_bins = self.items_per_bin + 10;
+        let per_thread_max_bins = unsafe { get_bin_size(self.bins, items_per_thread, self.ssp) };
         let combined_max_bins = per_thread_max_bins * threads;
 
-        let thread_bin_sizes = Matrix::new(threads, self.bins, 0usize);
+        let mut thread_bin_sizes = Matrix::new(threads, self.bins, 0usize);
         println!("{} {}", self.items_per_bin, per_thread_max_bins);
-        let input_mapping = vec![0usize; total_bins * per_thread_max_bins];
+        let mut input_mapping = vec![0usize; total_bins * per_thread_max_bins];
 
-        let set_input_mapping = |thread_idx: usize, bin_idx: usize, bs: usize, value: usize| {
+        let mut set_input_mapping = |thread_idx: usize, bin_idx: usize, bs: usize, value: usize| {
             let bin_begin = combined_max_bins * bin_idx;
             let thread_begin = per_thread_max_bins * thread_idx;
-            let input_mapping_ptr = (&input_mapping).as_ptr() as *const usize;
-            unsafe {
-                *(input_mapping_ptr as *mut usize).add(bin_begin + thread_begin + bs) = value;
-            }
-            // input_mapping[bin_begin + thread_begin + bs] = value;
+            input_mapping[bin_begin + thread_begin + bs] = value;
         };
 
-        let val_backing = vec![*ZERO_BLOCK; total_bins * per_thread_max_bins];
-        let set_values = |thread_idx: usize, bin_idx: usize, bs: usize, value: Block| {
+        let mut val_backing = vec![*ZERO_BLOCK; total_bins * per_thread_max_bins];
+        let mut set_values = |thread_idx: usize, bin_idx: usize, bs: usize, value: Block| {
             let bin_begin = combined_max_bins * bin_idx;
             let thread_begin = per_thread_max_bins * thread_idx;
-            let val_backing_ptr = (&val_backing).as_ptr() as *const Block;
-            unsafe {
-                *(val_backing_ptr as *mut Block).add(bin_begin + thread_begin + bs) = value;
-            }
-            // val_backing[bin_begin + thread_begin + bs] = value;
+            val_backing[bin_begin + thread_begin + bs] = value;
         };
 
-        let hash_backing = vec![*ZERO_BLOCK; total_bins * per_thread_max_bins];
-        let set_hashes = |thread_idx: usize, bin_idx: usize, bs: usize, value: Block| {
+        let mut hash_backing = vec![*ZERO_BLOCK; total_bins * per_thread_max_bins];
+
+        let mut set_hashes = |thread_idx: usize, bin_idx: usize, bs: usize, value: Block| {
             let bin_begin: usize = combined_max_bins * bin_idx;
             let thread_begin = per_thread_max_bins * thread_idx;
-            let hash_backing_ptr = (&hash_backing).as_ptr() as *const Block;
-            unsafe {
-                *(hash_backing_ptr as *mut Block).add(bin_begin + thread_begin + bs) = value;
-            }
-            // hash_backing[bin_begin + thread_begin + bs] = value;
+            hash_backing[bin_begin + thread_begin + bs] = value;
         };
-
         unsafe {
             libdivide_u64_gen(self.bins);
         }
-
         let threads_id: Vec<usize> = (0..threads).collect();
-        cfg_iter!(threads_id).for_each(|&thread_idx| {
+        threads_id.iter().for_each(|&thread_idx| {
             let mut hasher = Aes::new();
             hasher.set_key(self.seed);
             let begin = inputs.len() * thread_idx / threads;
             let end = inputs.len() * (thread_idx + 1) / threads;
             let inputs = &inputs[begin..end];
             {
-                // let bin_sizes = thread_bin_sizes.mut_row_data(thread_idx, 1);
-                let bin_sizes = unsafe {
-                    from_raw_parts_mut(
-                        &thread_bin_sizes.storage[thread_idx * thread_bin_sizes.stride]
-                            as *const usize as *mut usize,
-                        thread_bin_sizes.stride * 1,
-                    )
-                };
+                let bin_sizes = thread_bin_sizes.mut_row_data(thread_idx, 1);
 
-                let mut hashes = vec![*ZERO_BLOCK; BATCH_SIZE];
+                let mut hashes = [*ZERO_BLOCK; BATCH_SIZE];
 
                 let main = inputs.len() / BATCH_SIZE * BATCH_SIZE;
 
@@ -131,18 +111,11 @@ impl Baxos {
                 let mut i = 0;
                 let mut in_idx = begin;
                 while i < main {
-                    for k in 0..4 {
-                        hasher.hash_blocks(
-                            &inputs[i + k * 8..i + k * 8 + 8],
-                            8,
-                            &mut hashes[k * 8..(k + 1) * 8],
-                        );
-                    }
-
-                    for k in 0..BATCH_SIZE {
-                        bin_idxs[k] = self.bin_idx_compress(&hashes[k]);
-                    }
-
+                    hasher.hash_blocks(&inputs[i..i + BATCH_SIZE], BATCH_SIZE, &mut hashes);
+                    assert_eq!(bin_idxs.len(), hashes.len());
+                    bin_idxs.iter_mut().zip(hashes).for_each(|(bin_id, hash)| {
+                        *bin_id = self.bin_idx_compress(&hash);
+                    });
                     unsafe {
                         do_mod32(&mut bin_idxs as *mut usize, self.bins);
                     }
@@ -150,7 +123,7 @@ impl Baxos {
                     for k in 0..BATCH_SIZE {
                         let bin_idx = bin_idxs[k];
 
-                        let bs = bin_sizes[bin_idx]; // bs = bin_sizes[bin_idx]++;
+                        let bs = bin_sizes[bin_idx];
                         bin_sizes[bin_idx] += 1;
 
                         set_input_mapping(thread_idx, bin_idx, bs, in_idx);
@@ -178,7 +151,7 @@ impl Baxos {
             }
         });
 
-        cfg_iter!(threads_id).for_each(|&thread_idx| {
+        threads_id.iter().for_each(|&thread_idx| {
             let paxos_size_per = self.params.size();
             let mut bin_idx = thread_idx;
             while bin_idx < self.bins {
@@ -197,44 +170,27 @@ impl Baxos {
                 let val_backing_start = &val_backing[0] as *const Block;
 
                 let bin_begin = combined_max_bins * bin_idx;
-                // let values = &mut val_backing[bin_begin..bin_begin + bin_size];
 
-                let val_backing_ptr = &val_backing[0] as *const Block;
-                let values = unsafe {
-                    from_raw_parts_mut((val_backing_ptr as *mut Block).add(bin_begin), bin_size)
-                };
+                let hashes = &mut hash_backing[bin_begin..bin_begin + bin_size];
+                let values = &mut val_backing[bin_begin..bin_begin + bin_size];
 
-                let copyed_hashes = hash_backing[combined_max_bins * bin_idx].clone();
-                let hash_backing_ptr: *const Block = &hash_backing[0] as *const Block;
-                let hashes = unsafe {
-                    from_raw_parts_mut((hash_backing_ptr as *mut Block).add(bin_begin), bin_size)
-                };
-
-                // let hashes = &mut hash_backing[bin_begin..bin_begin + bin_size];
-                let output_ptr = &output[0] as *const Block;
-                let output = unsafe {
-                    from_raw_parts_mut(
-                        (output_ptr as *mut Block).add(paxos_size_per * bin_idx),
-                        paxos_size_per,
-                    )
-                };
-                // let output: &mut [Block] = &mut output
-                //     [paxos_size_per * bin_idx..paxos_size_per * bin_idx + paxos_size_per];
+                let output: &mut [Block] = &mut output
+                    [paxos_size_per * bin_idx..paxos_size_per * bin_idx + paxos_size_per];
 
                 let mut bin_pos = thread_bin_sizes[(0, bin_idx)];
-                assert!(bin_pos < per_thread_max_bins);
-                assert_eq!(hashes[0], copyed_hashes);
+                assert!(bin_pos <= per_thread_max_bins);
 
                 for i in 1..threads {
                     let size = thread_bin_sizes[(i, bin_idx)];
                     assert!(size <= per_thread_max_bins);
                     let local_bin_begin = combined_max_bins * bin_idx;
                     let local_thread_begin: usize = per_thread_max_bins * i;
+
                     unsafe {
                         let thread_hashes = hash_backing_start
                             .offset((local_bin_begin + local_thread_begin) as isize);
                         memmove(
-                            &mut hashes[0] as *mut Block as *mut c_void,
+                            hashes.as_mut_ptr() as *mut Block as *mut c_void,
                             thread_hashes as *const c_void,
                             16 * size,
                         );
@@ -244,7 +200,7 @@ impl Baxos {
                     };
 
                     for j in 0..size {
-                        values[bin_pos + j] = unsafe { *thread_vals.offset(j as isize) }
+                        values[bin_pos + j] = unsafe { *thread_vals.add(j) }
                     }
                     bin_pos += size;
                 }
@@ -268,7 +224,6 @@ impl Baxos {
                     }
                     while i < bin_size {
                         let riter = rows.mut_row_data(i, 1);
-                        // let liter = [0usize; 3];
                         paxos.hasher.build_row(&hashes[i], riter);
                         col_weights[riter[0]] += 1;
                         col_weights[riter[1]] += 1;
@@ -287,16 +242,11 @@ impl Baxos {
 
     pub fn decode(&self, inputs: &[Block], values: &mut [Block], pp: &[Block], threads: usize) {
         let thread_ids: Vec<usize> = (0..threads).collect();
-
-        cfg_iter!(thread_ids).for_each(|&i| {
+        thread_ids.iter().for_each(|&i| {
             let begin = (inputs.len() * i) / threads;
             let end = (inputs.len() * (i + 1)) / threads;
             let inputs = &inputs[begin..end];
-            let value_ptr = &values[0] as *const Block;
-            // let values = &mut values[begin..end];
-            let values =
-                unsafe { from_raw_parts_mut((value_ptr as *mut Block).add(begin), end - begin) };
-
+            let values = &mut values[begin..end];
             {
                 // decode batch
                 let decode_size = std::cmp::min(512, inputs.len());
@@ -324,46 +274,35 @@ impl Baxos {
 
                 let mut i = 0usize;
                 while i < main {
-                    for k in 0..4 {
-                        hasher.hash_blocks(
-                            &inputs[i + k * 8..i + k * 8 + 8],
-                            8,
-                            &mut buffer[k * 8..(k + 1) * 8],
-                        );
-                    }
-
-                    for k in 0..BATCH_SIZE {
-                        bin_idxs[k] = self.bin_idx_compress(&buffer[k]);
-                    }
-
+                    hasher.hash_blocks(&inputs[i..i + BATCH_SIZE], 32, &mut buffer);
+                    bin_idxs
+                        .iter_mut()
+                        .zip(buffer.iter())
+                        .for_each(|(bin_id, b)| {
+                            *bin_id = self.bin_idx_compress(b);
+                        });
                     unsafe {
                         do_mod32(&mut bin_idxs as *mut usize, self.bins);
                     }
 
-                    for k in 0..BATCH_SIZE {
-                        let bin_idx = bin_idxs[k];
-
+                    bin_idxs.iter().enumerate().for_each(|(k, &bin_idx)| {
                         batches[(bin_idx, batch_sizes[bin_idx])] = buffer[k];
                         in_idxs[(bin_idx, batch_sizes[bin_idx])] = i + k;
-
                         batch_sizes[bin_idx] += 1;
-
                         if batch_sizes[bin_idx] == decode_size {
                             let p = &pp[bin_idx * size_per..(bin_idx + 1) * size_per];
                             let idx = in_idxs.row_data(bin_idx, 1);
                             self.impl_decode_bin(
-                                bin_idx,
                                 batches.row_data(bin_idx, 1),
                                 values,
-                                &mut buffer,
+                                &mut buff,
                                 idx,
                                 p,
                                 &mut paxos,
                             );
                             batch_sizes[bin_idx] = 0;
                         }
-                    }
-
+                    });
                     i += BATCH_SIZE;
                 }
 
@@ -371,15 +310,12 @@ impl Baxos {
                     let k = 0usize;
                     buffer[k] = hasher.hash_block(&inputs[i]);
                     let bin_idx = self.mod_num_bins(&buffer[k]);
-
                     batches[(bin_idx, batch_sizes[bin_idx])] = buffer[k];
                     in_idxs[(bin_idx, batch_sizes[bin_idx])] = i + k;
                     batch_sizes[bin_idx] += 1;
-
                     if batch_sizes[bin_idx] == decode_size {
                         let p = &pp[bin_idx * size_per..bin_idx * size_per + size_per];
                         self.impl_decode_bin(
-                            bin_idx,
                             batches.row_data(bin_idx, 1),
                             values,
                             &mut buff,
@@ -398,7 +334,6 @@ impl Baxos {
                         let b = &batches.row_data(bin_idx, 1)[0..batch_sizes[bin_idx]];
 
                         self.impl_decode_bin(
-                            bin_idx,
                             b,
                             values,
                             &mut buff,
@@ -414,7 +349,7 @@ impl Baxos {
 
     pub fn impl_decode_bin(
         &self,
-        bin_idx: usize,
+        // bin_idx: usize,
         hashes: &[Block],
         values: &mut [Block],
         values_buff: &mut [Block],
@@ -440,7 +375,8 @@ impl Baxos {
             paxos.decode32(&row.storage, &hashes[i..i + BATCH_SIZE], values_buff, pp);
 
             for k in 0..BATCH_SIZE {
-                values[in_idx[i + k]] = values[in_idx[i + k]] ^ values_buff[k];
+                // values[in_idx[i + k]] = values[in_idx[i + k]] ^ values_buff[k];
+                values[in_idx[i + k]] = values_buff[k];
             }
             i += BATCH_SIZE;
         }
@@ -469,11 +405,14 @@ mod tests {
     use super::super::block::ZERO_BLOCK;
     use super::super::prng::Prng;
     use super::*;
+    use std::fs::File;
+    use std::io::{BufWriter, Write};
+
     #[test]
     fn baxos_test() {
         let n: usize = 1 << 20;
         // let b = n / (1 << 14);
-        let b = n / (1 << 14);
+        let b = (1 << 14);
         let w: usize = 3;
         let s = 0usize;
         let t = 1usize;
@@ -489,16 +428,24 @@ mod tests {
                 let values = prng.get_blocks(n);
 
                 baxos.solve(&items, &values, &mut p, 1);
-                for i in 0..100 {
-                    println!("{:?}", p[i]);
-                }
+                let file = File::options()
+                    .create(true)
+                    .write(true)
+                    .open("result_tmp.txt")
+                    .unwrap();
+                let mut file = BufWriter::new(file);
+                // for pp in &p {
+                //     file.write(format!("{:?}\n", pp).as_bytes()).unwrap();
+                // }
 
                 baxos.decode(&items, &mut values2, &p, 1);
-
-                println!("===============");
-                for i in values2.len() - 100..values2.len() {
-                    println!("{:?}", values2[i]);
+                for pp in &values2 {
+                    file.write(format!("{:?}\n", pp).as_bytes()).unwrap();
                 }
+                // println!("===============");
+                // for i in values2.len() - 100..values2.len() {
+                //     println!("{:?}", values2[i]);
+                // }
                 // for i in 0..100 {
                 //     println!("{:?}", values2[i]);
                 // }
@@ -508,7 +455,7 @@ mod tests {
                 let mut count = 0;
                 values2.iter().zip(values.iter()).for_each(|(v1, v2)| {
                     if *v1 != *v2 {
-                        // println!("{}", i);
+                        println!("{}", i);
                         assert_eq!(*v1, *v2);
                         count += 1;
                     }
