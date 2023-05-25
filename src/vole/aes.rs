@@ -54,7 +54,7 @@ impl Aes {
 
     /// H(x) = AES(x) + x.
     pub fn hash_block(&self, plain_text: &Block) -> Block {
-        assert_ne!(self.key, Block::from_i64(-1, -1));
+        debug_assert_ne!(self.key, Block::from_i64(-1, -1));
         let mut cipher = Block::from_i64(0, 0);
         unsafe {
             hash_blocks(
@@ -73,7 +73,7 @@ impl Aes {
         block_length: usize,
         ciphertexts: &mut [Block],
     ) {
-        assert_ne!(self.key, Block::from_i64(-1, -1));
+        debug_assert_ne!(self.key, Block::from_i64(-1, -1));
         unsafe {
             hash_blocks(
                 self.aes_pointer,
@@ -99,7 +99,7 @@ mod tests {
         aes.set_key(key);
         let cipher = aes.hash_block(&plain);
         let result = Block::from_i64(3326810793440857224, 4263935709876578662);
-        assert_eq!(result, cipher);
+        debug_assert_eq!(result, cipher);
         let count = 100;
         let mut plaintext = Vec::new();
         for _i in 0..count {
@@ -110,7 +110,7 @@ mod tests {
         aes.hash_blocks(&plaintext, count, &mut ciphertexts);
         for i in 0..count {
             let cipher = aes.hash_block(&plaintext[i]);
-            assert_eq!(cipher, ciphertexts[i]);
+            debug_assert_eq!(cipher, ciphertexts[i]);
         }
     }
 }

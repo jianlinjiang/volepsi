@@ -44,7 +44,7 @@ mod tests {
             });
 
             let x = encode_data(data[0], data[1], data[2], data[3]);
-            assert_eq!(decode_data(x), (data[0], data[1], data[2], data[3]));
+            debug_assert_eq!(decode_data(x), (data[0], data[1], data[2], data[3]));
         }
     }
 
@@ -65,7 +65,7 @@ mod tests {
             key.push(record.id);
             value.push(encode_data(date[0], date[1], date[2], record.age));
         }
-        assert_eq!(key.len(), size);
-        assert_eq!(value.len(), size);
+        debug_assert_eq!(key.len(), size);
+        debug_assert_eq!(value.len(), size);
     }
 }

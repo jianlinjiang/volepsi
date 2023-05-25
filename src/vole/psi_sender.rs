@@ -51,6 +51,12 @@ impl MessageHandler for SenderHandler {
                             .collect(),
                     )
                     .await?;
+                match writer.send("ACK".into()).await {
+                    Ok(_) => {}
+                    Err(e) => {
+                        error!("{:?}", e)
+                    }
+                }
             }
             RequestType::RequestHash => {
                 self.channel_sender.send(vec![]).await?;
@@ -62,6 +68,7 @@ impl MessageHandler for SenderHandler {
                         error!("{:?}", e)
                     }
                 }
+                self.channel_sender.send(vec![]).await?;
             }
         }
         Ok(())
@@ -118,7 +125,7 @@ impl Sender {
         self.receiver_size = inputs.len();
         self.sender_size = self.receiver_size;
 
-        let mut mask_size: usize = ((self.ssp as f64
+        let mask_size: usize = ((self.ssp as f64
             + ((self.sender_size * self.receiver_size) as f64)
                 .log2()
                 .ceil())
@@ -140,12 +147,10 @@ impl Sender {
             vole_sender.get_b(baxos_size)
         });
 
-        
-        
         // receive paxos seed
         let seed = self.channel_recv.recv().await.unwrap();
         info!("receiver seed");
-        assert_eq!(seed.len(), 1);
+        debug_assert_eq!(seed.len(), 1);
         baxos.seed = seed[0];
         self.baxos = Some(baxos);
 
@@ -153,11 +158,11 @@ impl Sender {
         self.b = handler.join().unwrap();
         info!("vole finish");
         let pp: Vec<Block> = self.channel_recv.recv().await.unwrap();
-        assert_eq!(pp.len(), baxos_size);
+        debug_assert_eq!(pp.len(), baxos_size);
         info!("receive pp");
         // receive from reveiver with pp
 
-        assert_eq!(self.b.len(), pp.len());
+        debug_assert_eq!(self.b.len(), pp.len());
 
         cfg_iter_mut!(self.b).zip(&pp).for_each(|(b, p)| {
             *b = *b ^ self.d.gf128_mul_reduce(p);
@@ -169,7 +174,7 @@ impl Sender {
 
         self.eval(inputs, &mut hashes);
         info!("eval hashes");
-        mask_size = 16;
+        // mask_size = 16;
         let mut res = vec![0u8; hashes.len() * mask_size];
         if compress {
             unsafe {
@@ -188,7 +193,7 @@ impl Sender {
         // network sender
         assert_eq!(self.channel_recv.recv().await.unwrap().len(), 0);
         self.cross_sender.send(res).unwrap();
-        info!("send res");
+        info!("{}", self.channel_recv.recv().await.unwrap().len());
         // network send hashes
     }
 

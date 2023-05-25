@@ -1,5 +1,4 @@
 use core::panic;
-use std::cell::RefCell;
 use std::collections::HashSet;
 #[derive(Debug, Clone)]
 pub struct WeightNode {
@@ -34,10 +33,10 @@ impl<'a> WeightData {
             while head.is_some() {
                 let pointer = head.unwrap();
                 unsafe {
-                    assert_eq!((*pointer).weight, i as usize);
-                    assert_eq!(nodes.insert(self.idx_of(&(*pointer)) as usize), true);
+                    debug_assert_eq!((*pointer).weight, i as usize);
+                    debug_assert_eq!(nodes.insert(self.idx_of(&(*pointer)) as usize), true);
                     if (*pointer).next_node != NULL_NODE {
-                        assert_eq!(
+                        debug_assert_eq!(
                             self.nodes[(*pointer).next_node as usize].prev_node,
                             self.idx_of(&(*pointer)) as usize
                         );
@@ -76,7 +75,7 @@ impl<'a> WeightData {
             if ws.is_some() {
                 let w: *mut WeightNode = ws.unwrap();
                 unsafe {
-                    assert_eq!((*w).prev_node, NULL_NODE);
+                    debug_assert_eq!((*w).prev_node, NULL_NODE);
                     (*w).prev_node = idx_of(node, start) as usize;
                     node.next_node = idx_of(w, start) as usize;
                 }
@@ -101,8 +100,8 @@ impl<'a> WeightData {
     pub fn push_node(&mut self, node: *mut WeightNode) {
         unsafe {
             let weight: usize = (*node).weight as usize;
-            assert_eq!((*node).next_node, NULL_NODE);
-            assert_eq!((*node).prev_node, NULL_NODE);
+            debug_assert_eq!((*node).next_node, NULL_NODE);
+            debug_assert_eq!((*node).prev_node, NULL_NODE);
 
             if self.weight_sets.len() <= weight as usize {
                 self.weight_sets.resize(weight + 1, None);
@@ -112,7 +111,7 @@ impl<'a> WeightData {
                 self.weight_sets[weight] = Some(node);
             } else {
                 let ptr = self.weight_sets[weight].unwrap();
-                assert_eq!((*ptr).prev_node, NULL_NODE);
+                debug_assert_eq!((*ptr).prev_node, NULL_NODE);
                 (*ptr).prev_node = self.idx_of(&(*node)) as usize;
                 (*node).next_node = self.idx_of(&(*ptr)) as usize;
                 self.weight_sets[weight] = Some(node);
@@ -125,7 +124,7 @@ impl<'a> WeightData {
             let weight: usize = (*node).weight as usize;
             if (*node).prev_node == NULL_NODE {
                 // 链表头部
-                assert_eq!(self.weight_sets[weight].unwrap(), node);
+                debug_assert_eq!(self.weight_sets[weight].unwrap(), node);
 
                 if (*node).next_node == NULL_NODE {
                     // 链表里仅有这一个元素
@@ -159,7 +158,7 @@ impl<'a> WeightData {
 
     pub fn decement_weight(&mut self, node: *mut WeightNode) {
         unsafe {
-            assert!((*node).weight != 0);
+            debug_assert!((*node).weight != 0);
             self.pop_node(node);
             (*node).weight -= 1;
             self.push_node(node);
@@ -189,7 +188,7 @@ mod tests {
         let node = &nodes[3];
         let offset = idx_of(node as *const WeightNode, &nodes[0] as *const WeightNode);
         // (node as *const WeightNode).offset_from(&nodes[0] as *const WeightNode) as usize
-        assert_eq!(offset, 3);
+        debug_assert_eq!(offset, 3);
     }
 
     #[test]

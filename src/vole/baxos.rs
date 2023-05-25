@@ -53,7 +53,7 @@ impl Baxos {
         output: &mut [Block],
         threads: usize,
     ) {
-        assert_eq!(output.len(), self.size());
+        debug_assert_eq!(output.len(), self.size());
         const BATCH_SIZE: usize = 32usize;
         let total_bins = self.bins * threads;
         let items_per_thread = (self.items + threads - 1) / threads;
@@ -109,7 +109,7 @@ impl Baxos {
                 let mut in_idx = begin;
                 while i < main {
                     hasher.hash_blocks(&inputs[i..i + BATCH_SIZE], BATCH_SIZE, &mut hashes);
-                    assert_eq!(bin_idxs.len(), hashes.len());
+                    debug_assert_eq!(bin_idxs.len(), hashes.len());
                     bin_idxs.iter_mut().zip(hashes).for_each(|(bin_id, hash)| {
                         *bin_id = self.bin_idx_compress(&hash);
                     });
@@ -134,7 +134,7 @@ impl Baxos {
                     let bin_idx = self.mod_num_bins(&hash);
                     let bs = bin_sizes[bin_idx];
                     bin_sizes[bin_idx] += 1;
-                    assert!(bs < per_thread_max_bins);
+                    debug_assert!(bs < per_thread_max_bins);
                     set_input_mapping(thread_idx, bin_idx, bs, in_idx);
                     set_values(thread_idx, bin_idx, bs, values[in_idx]);
                     set_hashes(thread_idx, bin_idx, bs, hash);
@@ -152,7 +152,7 @@ impl Baxos {
                 for i in 0..threads {
                     bin_size += thread_bin_sizes[(i, bin_idx)];
                 }
-                assert!(bin_size <= self.items_per_bin);
+                debug_assert!(bin_size <= self.items_per_bin);
 
                 let mut paxos: Paxos = Paxos::new_with_params(bin_size, &self.params, self.seed);
 
@@ -171,11 +171,11 @@ impl Baxos {
                     [paxos_size_per * bin_idx..paxos_size_per * bin_idx + paxos_size_per];
 
                 let mut bin_pos = thread_bin_sizes[(0, bin_idx)];
-                assert!(bin_pos <= per_thread_max_bins);
+                debug_assert!(bin_pos <= per_thread_max_bins);
 
                 for i in 1..threads {
                     let size = thread_bin_sizes[(i, bin_idx)];
-                    assert!(size <= per_thread_max_bins);
+                    debug_assert!(size <= per_thread_max_bins);
                     let local_bin_begin = combined_max_bins * bin_idx;
                     let local_thread_begin: usize = per_thread_max_bins * i;
 
@@ -354,11 +354,11 @@ impl Baxos {
         const MAX_WEIGHT_SIZE: usize = 20;
 
         let main = hashes.len() / BATCH_SIZE * BATCH_SIZE;
-        assert!(self.weight <= MAX_WEIGHT_SIZE);
+        debug_assert!(self.weight <= MAX_WEIGHT_SIZE);
 
         let mut row = Matrix::new(BATCH_SIZE, self.weight, 0usize);
 
-        assert!(values_buff.len() >= BATCH_SIZE);
+        debug_assert!(values_buff.len() >= BATCH_SIZE);
 
         let mut i = 0;
         while i < main {
@@ -428,13 +428,13 @@ mod tests {
                 for pp in &values2 {
                     file.write(format!("{:?}\n", pp).as_bytes()).unwrap();
                 }
-                assert_eq!(values2.len(), values.len());
+                debug_assert_eq!(values2.len(), values.len());
                 let mut i = 0;
                 let mut count = 0;
                 values2.iter().zip(values.iter()).for_each(|(v1, v2)| {
                     if *v1 != *v2 {
                         println!("{}", i);
-                        assert_eq!(*v1, *v2);
+                        debug_assert_eq!(*v1, *v2);
                         count += 1;
                     }
                     i += 1;
@@ -467,10 +467,10 @@ mod tests {
                 // for pp in p {
                 //     println!("{:?}", pp);
                 // }
-                assert_eq!(values2.len(), values.len());
-                assert_eq!(values2, values);
+                debug_assert_eq!(values2.len(), values.len());
+                debug_assert_eq!(values2, values);
                 values2.iter().zip(values.iter()).for_each(|(v1, v2)| {
-                    assert_eq!(*v1, *v2);
+                    debug_assert_eq!(*v1, *v2);
                 });
             }
         }

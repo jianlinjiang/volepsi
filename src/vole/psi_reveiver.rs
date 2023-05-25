@@ -8,7 +8,7 @@ use bytes::Bytes;
 use libc::memcpy;
 use log::error;
 use network::{ReliableSender, SimpleSender};
-use rand::{thread_rng, Rng};
+use rand::{thread_rng};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use std::collections::HashMap;
@@ -58,8 +58,8 @@ impl Receiver {
             / 8f64)
             .ceil() as usize;
         let compress = mask_size != 16;
-        assert_eq!(compress, true);
-
+        debug_assert_eq!(compress, true);
+        info!("mask size {}", mask_size);
         let seed: Block = self.prng.get_block();
 
         let mut baxos = Baxos::new(inputs.len(), self.bin_size, 3, self.ssp, seed);
@@ -104,7 +104,7 @@ impl Receiver {
         baxos.solve(inputs, &self_hash, &mut p, 1);
 
         (self.a, self.c) = handler.join().unwrap();
-
+        info!("vole finish");
         let pp: Vec<[i64; 2]> = cfg_iter_mut!(p)
             .zip(&self.c)
             .map(|(pp, cc)| {
@@ -112,14 +112,20 @@ impl Receiver {
                 [pp.get(0) as i64, pp.get(1) as i64]
             })
             .collect();
+        let mut network = ReliableSender::new();
         // send pp
-        network
+        let ret = network
             .send(
                 SocketAddr::new(self.sender_ip, self.sender_port),
                 Bytes::from(bincode::serialize(&RequestType::BaxosPp(pp)).unwrap()),
             )
             .await;
-
+        match ret.await {
+            Ok(_) => {},
+            Err(e) => {
+                error!("error when send encoded p {:?}", e);
+            }
+        }
         let mut outputs = vec![*ZERO_BLOCK; inputs.len()];
         baxos.decode(inputs, &mut outputs, &self.a, 1);
         
@@ -134,27 +140,27 @@ impl Receiver {
         }
 
         let mut mask = *ZERO_BLOCK;
-        // unsafe {
-        //     set_block_mask(&mut mask as *mut Block as *mut c_void, mask_size);
-        // }
+        unsafe {
+            set_block_mask(&mut mask as *mut Block as *mut c_void, mask_size);
+        }
         let mut map: HashMap<Block, usize> = HashMap::with_capacity(outputs_res.len());
         outputs_res.iter().enumerate().for_each(|(i, h)| {
-            if map.insert(*h, i).is_some() {
+            if map.insert(*h & mask, i).is_some() {
                 panic!("conflicts");
             }
         });
 
         // receive peer hashes
-        let mut network = ReliableSender::new();
         let ret = network
             .send(
                 SocketAddr::new(self.sender_ip, self.sender_port),
                 Bytes::from(bincode::serialize(&RequestType::RequestHash).unwrap()),
             )
             .await;
-        let mask_size = 16;
+
         match ret.await {
             Ok(data) => {
+                info!("receive res");
                 let peer_hashes: Vec<u8> = bincode::deserialize(&data).unwrap();
                 let mut peer_hashes_ptr = peer_hashes.as_ptr();
                 let mut h = *ZERO_BLOCK;
@@ -173,7 +179,7 @@ impl Receiver {
                 }
             }
             Err(e) => {
-                error!("error when send encrypted point to sender {:?}", e);
+                error!("error when receive result from sender {:?}", e);
             }
         }
         // write data to csv

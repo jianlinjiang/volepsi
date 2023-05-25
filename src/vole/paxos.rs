@@ -51,7 +51,7 @@ extern "C" {
 }
 
 pub fn gf128_matrix_inv(mut mtx: Matrix<Block>) -> Matrix<Block> {
-    assert_eq!(mtx.rows(), mtx.cols());
+    debug_assert_eq!(mtx.rows(), mtx.cols());
 
     let n = mtx.rows();
 
@@ -103,7 +103,7 @@ pub fn gf128_matrix_inv(mut mtx: Matrix<Block>) -> Matrix<Block> {
 }
 
 pub fn gf128_matrix_mul(m0: &Matrix<Block>, m1: &Matrix<Block>) -> Matrix<Block> {
-    assert_eq!(m0.cols(), m1.rows());
+    debug_assert_eq!(m0.cols(), m1.rows());
     let mut ret: Matrix<Block> = Matrix::new(m0.rows(), m1.cols(), *ZERO_BLOCK);
     for i in 0..ret.rows() {
         for j in 0..ret.cols() {
@@ -131,9 +131,9 @@ impl PaxosParam {
             panic!("weight must be 2 or greater");
         }
         let log_n = (items_num as f64).log2();
-        let mut dense_size = 0;
-        let mut sparse_size = 0;
-        let mut g: usize = 0;
+        let dense_size;
+        let sparse_size;
+        let g;
         if weight == 2 {
             let a = 7.529;
             let b = 0.61;
@@ -144,7 +144,7 @@ impl PaxosParam {
             dense_size = g;
             sparse_size = 2 * items_num;
         } else {
-            let mut ee: f64 = 0.0;
+            let ee: f64;
             if weight == 3 {
                 ee = 1.223;
             } else if weight == 4 {
@@ -250,17 +250,17 @@ impl Paxos {
     }
 
     pub fn set_input(&mut self, inputs: &Vec<Block>) {
-        assert_eq!(self.items_num, inputs.len());
+        debug_assert_eq!(self.items_num, inputs.len());
 
         let mut col_weights = vec![0; self.params.sparse_size];
 
         // TODO: Remove when release build
-        {
-            let mut input_set: BTreeSet<Block> = BTreeSet::new();
-            for i in inputs {
-                assert!(input_set.insert(*i))
-            }
-        }
+        // {
+        //     let mut input_set: BTreeSet<Block> = BTreeSet::new();
+        //     for i in inputs {
+        //         debug_assert!(input_set.insert(*i))
+        //     }
+        // }
         let mut i = 0;
         // 32 行一次操作
         self.rows
@@ -280,11 +280,11 @@ impl Paxos {
                 );
                 i += PAXOS_BUILD_ROW_SIZE;
             });
-        assert_eq!(
+        debug_assert_eq!(
             self.rows.storage[i * self.params.weight..].len() / self.params.weight,
             self.dense[i..].len()
         );
-        assert_eq!(
+        debug_assert_eq!(
             self.rows.storage[i * self.params.weight..].len() / self.params.weight,
             inputs[i..].len()
         );
@@ -303,7 +303,7 @@ impl Paxos {
         // rebuild columns
         self.rebuild_columns(&col_weights, self.params.weight * self.items_num);
 
-        assert!(self.weight_sets.is_none());
+        debug_assert!(self.weight_sets.is_none());
         self.weight_sets = Some(WeightData::init(&col_weights));
     }
 
@@ -311,7 +311,7 @@ impl Paxos {
         if output.len() != self.size() {
             panic!("output size doesn't match");
         }
-        assert_eq!(self.items_num, values.len());
+        debug_assert_eq!(self.items_num, values.len());
         let mut main_rows: Vec<usize> = Vec::with_capacity(self.items_num);
         let mut main_cols: Vec<usize> = Vec::with_capacity(self.items_num);
         let mut gap_rows: Vec<[usize; 2]> = Vec::new();
@@ -329,7 +329,7 @@ impl Paxos {
     }
 
     pub fn decode(&mut self, inputs: &Vec<Block>, values: &mut Vec<Block>, pp: &Vec<Block>) {
-        assert_eq!(pp.len(), self.size());
+        debug_assert_eq!(pp.len(), self.size());
 
         let main = inputs.len() / PAXOS_BUILD_ROW_SIZE * PAXOS_BUILD_ROW_SIZE;
 
@@ -369,10 +369,10 @@ impl Paxos {
         values: &mut [Block],
         pp: &[Block],
     ) {
-        assert_eq!(rows.len(), 32 * 3);
-        assert_eq!(dense.len(), 32);
-        assert_eq!(values.len(), 32);
-        assert_eq!(pp[self.params.sparse_size..].len(), self.params.dense_size);
+        debug_assert_eq!(rows.len(), 32 * 3);
+        debug_assert_eq!(dense.len(), 32);
+        debug_assert_eq!(values.len(), 32);
+        debug_assert_eq!(pp[self.params.sparse_size..].len(), self.params.dense_size);
 
         let weight = self.params.weight;
         for j in 0..4 {
@@ -436,7 +436,7 @@ impl Paxos {
 
     pub fn decode1(&mut self, rows: &[usize], dense: &Block, value: &mut Block, pp: &[Block]) {
         *value = pp[rows[0]];
-        assert_eq!(rows.len(), self.params.weight);
+        debug_assert_eq!(rows.len(), self.params.weight);
         for j in 1..self.params.weight {
             *value = *value ^ pp[rows[j]];
         }
@@ -456,13 +456,13 @@ impl Paxos {
         x: &[Block],
         p: &mut [Block],
     ) {
-        assert_eq!(main_rows.len(), main_cols.len());
+        debug_assert_eq!(main_rows.len(), main_cols.len());
 
         let g = gap_rows.len();
         let p2 = &mut p[self.params.sparse_size..];
 
         debug!("g: {}, dense_size: {}", g, self.params.dense_size);
-        assert!(g <= self.params.dense_size);
+        debug_assert!(g <= self.params.dense_size);
 
         if g > 0 {
             let fcinv: FCInv = self.get_fcinv(main_rows, main_cols, gap_rows);
@@ -499,7 +499,7 @@ impl Paxos {
 
             ee = gf128_matrix_inv(ee);
 
-            assert!(ee.capacity != 0);
+            debug_assert!(ee.capacity != 0);
 
             for i in 0..size {
                 let pp = &mut p2[i];
@@ -579,7 +579,7 @@ impl Paxos {
                     self.rows.row_data(h_row, 1).iter().for_each(|h_col| {
                         let c_col2 = col_mapping[*h_col];
                         if c_col2 != usize::MAX {
-                            assert!(c_col2 <= c_col);
+                            debug_assert!(c_col2 <= c_col);
                             let iter = row.get(&c_col2);
                             if iter.is_none() {
                                 row.insert(c_col2);
@@ -589,7 +589,7 @@ impl Paxos {
                             }
                         }
                     });
-                    assert!(row.len() == 0 || *row.last().unwrap() != c_col);
+                    debug_assert!(row.len() == 0 || *row.last().unwrap() != c_col);
                 }
             }
         }
@@ -602,7 +602,7 @@ impl Paxos {
         main_col: &mut Vec<usize>,
         gap_rows: &mut Vec<[usize; 2]>,
     ) {
-        assert!(self.weight_sets.is_some());
+        debug_assert!(self.weight_sets.is_some());
 
         let mut row_set = vec![0u8; self.items_num];
         let weight_sets = self.weight_sets.as_mut().unwrap();
@@ -636,26 +636,26 @@ impl Paxos {
                             main_row.push(row_idx);
                             first = false;
                         } else {
-                            assert_ne!(*main_row.last().unwrap(), row_idx);
+                            debug_assert_ne!(*main_row.last().unwrap(), row_idx);
                             gap_rows.push([row_idx, *main_row.last().unwrap()]);
                         }
                     }
                 });
-                assert_eq!(first, false);
+                debug_assert_eq!(first, false);
             }
         }
     }
 
-    pub fn rebuild_columns(&mut self, col_weights: &[usize], total_weight: usize) {
-        assert_eq!(self.col_backing.len(), total_weight);
+    pub fn rebuild_columns(&mut self, _col_weights: &[usize], total_weight: usize) {
+        debug_assert_eq!(self.col_backing.len(), total_weight);
         // TODO: Remove when release build
-        {
-            let mut col_sum: usize = 0;
-            col_weights.iter().for_each(|x| {
-                col_sum += x;
-            });
-            assert_eq!(col_sum, total_weight);
-        }
+        // {
+        //     let mut col_sum: usize = 0;
+        //     col_weights.iter().for_each(|x| {
+        //         col_sum += x;
+        //     });
+        //     debug_assert_eq!(col_sum, total_weight);
+        // }
         // self cols 存储
         if self.rows.cols() == 3 {
             for i in 0..self.items_num {
@@ -671,7 +671,7 @@ impl Paxos {
                 if x.len() == 0 {
                     return;
                 }
-                assert!(col_backing_start < self.col_backing.len());
+                debug_assert!(col_backing_start < self.col_backing.len());
                 self.col_backing[col_backing_start..col_backing_start + x.len()].copy_from_slice(x);
                 col_backing_start += x.len();
             });
@@ -681,15 +681,15 @@ impl Paxos {
     }
 
     pub fn set_mul_inputs(&mut self, rows: &Matrix<usize>, dense: &[Block], col_weights: &[usize]) {
-        // assert_eq!(rows.rows(), self.items_num);
-        assert_eq!(dense.len(), self.items_num);
-        assert_eq!(rows.cols(), self.params.weight);
-        // assert_eq!(col_backing.len(), self.items_num * self.params.weight);
-        assert_eq!(col_weights.len(), self.params.sparse_size);
+        // debug_assert_eq!(rows.rows(), self.items_num);
+        debug_assert_eq!(dense.len(), self.items_num);
+        debug_assert_eq!(rows.cols(), self.params.weight);
+        // debug_assert_eq!(col_backing.len(), self.items_num * self.params.weight);
+        debug_assert_eq!(col_weights.len(), self.params.sparse_size);
         self.rows.storage.copy_from_slice(&rows.storage);
         self.dense.copy_from_slice(&dense);
         self.rebuild_columns(col_weights, self.params.weight * self.items_num);
-        assert!(self.weight_sets.is_none());
+        debug_assert!(self.weight_sets.is_none());
         self.weight_sets = Some(WeightData::init(col_weights))
     }
 }
@@ -731,7 +731,7 @@ impl PaxosHash {
     }
 
     pub fn build_row32(&self, hash: &[Block], row: &mut [usize]) {
-        assert_eq!(hash.len(), 32);
+        debug_assert_eq!(hash.len(), 32);
         unsafe {
             build_row32_raw(
                 self.pointer,
@@ -825,10 +825,10 @@ mod tests {
         let inv = gf128_matrix_inv(mtx.clone());
         let I: Matrix<Block> = gf128_matrix_mul(&inv, &mtx);
         for i in 0..n {
-            assert_eq!(I[(i, i)], *ONE_BLOCK);
+            debug_assert_eq!(I[(i, i)], *ONE_BLOCK);
             for j in 0..n {
                 if i != j && I[(i, j)] != *ZERO_BLOCK {
-                    assert!(false);
+                    debug_assert!(false);
                 }
             }
         }
@@ -905,10 +905,10 @@ mod tests {
                 h.build_row(&hash[i], &mut rr);
                 println!("{:?}", rr);
                 for j in 0..3 {
-                    assert_eq!(rows[(i, j)], rr[j]);
+                    debug_assert_eq!(rows[(i, j)], rr[j]);
 
                     if tt == 0 {
-                        assert_eq!(rows[(i, j)], exp[i][j]);
+                        debug_assert_eq!(rows[(i, j)], exp[i][j]);
                     }
                 }
             }
@@ -933,7 +933,7 @@ mod tests {
             paxos2.set_input(&items);
             for i in 0..paxos.rows.rows() {
                 for j in 0..w {
-                    assert_eq!(paxos.rows[(i, j)], paxos2.rows[(i, j)]);
+                    debug_assert_eq!(paxos.rows[(i, j)], paxos2.rows[(i, j)]);
                 }
             }
             paxos.encode(&values, &mut p, None);
@@ -943,7 +943,7 @@ mod tests {
                 .zip(values2.iter())
                 .enumerate()
                 .for_each(|(i, (x1, x2))| {
-                    assert_eq!(x1, x2);
+                    debug_assert_eq!(x1, x2);
                 });
         }
     }

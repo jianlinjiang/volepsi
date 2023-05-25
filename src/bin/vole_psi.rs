@@ -95,9 +95,6 @@ async fn main() {
                 })
                 .collect();
             sender.run(&inputs).await;
-            loop {
-                
-            }
         }
 
         Role::Receiver => {

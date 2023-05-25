@@ -2,7 +2,7 @@ use crate::error::NetworkError;
 use bytes::Bytes;
 use futures::sink::SinkExt as _;
 use futures::stream::StreamExt as _;
-use log::{warn};
+use log::{warn, debug};
 use rand::prelude::SliceRandom as _;
 use rand::rngs::SmallRng;
 use rand::SeedableRng as _;
@@ -131,7 +131,7 @@ impl Connection {
                         },
                         _ => {
                             // Something has gone wrong (either the channel dropped or we failed to read from it).
-                            warn!("{}", NetworkError::FailedToReceiveAck(self.address));
+                            debug!("{}", NetworkError::FailedToReceiveAck(self.address));
                             return;
                         }
                     }

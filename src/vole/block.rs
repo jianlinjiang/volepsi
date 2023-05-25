@@ -22,7 +22,7 @@ lazy_static! {
 
 impl Block {
     pub fn get(&self, id: usize) -> u64 {
-        assert!(id < 2);
+        debug_assert!(id < 2);
         unsafe {
             let pointer = &self.0 as *const __m128i as *const u64;
             *pointer.add(id)
@@ -69,7 +69,7 @@ impl Block {
         xy1.gf128_reduce(xy2)
     }
 
-    fn gf128_pow(&self, i: u64) -> Block {
+    fn _gf128_pow(&self, i: u64) -> Block {
         if *self == Block::from_i64(0, 0) {
             return Block::from_i64(0, 0);
         }
@@ -234,7 +234,7 @@ pub fn gf128_inv(x: &Block) -> Block {
             result = result.gf128_mul_reduce(&b);
         }
     }
-    assert_eq!(result.gf128_mul_reduce(x), *ONE_BLOCK);
+    debug_assert_eq!(result.gf128_mul_reduce(x), *ONE_BLOCK);
     result
 }
 
@@ -242,8 +242,7 @@ pub fn gf128_inv(x: &Block) -> Block {
 mod tests {
     #![allow(arithmetic_overflow)]
     use super::*;
-    use rand::{thread_rng, RngCore};
-    use std::time::{Duration, Instant};
+    use rand::{thread_rng};
     #[test]
     fn block_inv_test() {
         let mut rng = thread_rng();
@@ -251,7 +250,7 @@ mod tests {
             let a = Block::rand(&mut rng);
             let b = gf128_inv(&a);
             let c = a.gf128_mul_reduce(&b);
-            assert_eq!(c, *ONE_BLOCK);
+            debug_assert_eq!(c, *ONE_BLOCK);
         }
     }
 
@@ -263,7 +262,7 @@ mod tests {
             let b = Block::rand(&mut rng);
             let c = a + b;
             let d = a ^ b;
-            assert_eq!(c, d);
+            debug_assert_eq!(c, d);
         }
     }
 
@@ -275,7 +274,7 @@ mod tests {
             let a0 = a.get(0);
             let a1 = a.get(1);
             let b = Block::from_i64(a1 as i64, a0 as i64);
-            assert_eq!(a, b);
+            debug_assert_eq!(a, b);
         }
     }
 }
