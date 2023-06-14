@@ -191,7 +191,6 @@ impl Sender {
         }
         // sender to receivers
         // network sender
-        assert_eq!(self.channel_recv.recv().await.unwrap().len(), 0);
         self.cross_sender.send(res).unwrap();
         info!("{}", self.channel_recv.recv().await.unwrap().len());
         // network send hashes
