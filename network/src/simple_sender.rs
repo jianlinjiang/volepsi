@@ -2,16 +2,21 @@ use crate::error::NetworkError;
 use bytes::Bytes;
 use futures::sink::SinkExt as _;
 use futures::stream::StreamExt as _;
-use log::{warn, debug};
+use log::{debug, warn};
 use rand::prelude::SliceRandom as _;
 use rand::rngs::SmallRng;
 use rand::SeedableRng as _;
 use std::collections::HashMap;
+use std::fs::File;
+use std::io;
+use std::io::BufReader;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio_rustls::rustls::{self, OwnedTrustAnchor};
+use tokio_rustls::TlsConnector;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
-
 /// We keep alive one TCP connection per peer, each connection is handled by a separate task (called `Connection`).
 /// We communicate with our 'connections' through a dedicated channel kept by the HashMap called `connections`.
 pub struct SimpleSender {
@@ -97,13 +102,35 @@ impl Connection {
 
     /// Main loop trying to connect to the peer and transmit messages.
     async fn run(&mut self) {
+        let mut pem = BufReader::new(File::open("pems/ca.crt").unwrap());
+        let certs = rustls_pemfile::certs(&mut pem).unwrap();
+        let mut root_cert_store = rustls::RootCertStore::empty();
+        let trust_anchors = certs.iter().map(|cert| {
+            let ta = webpki::TrustAnchor::try_from_cert_der(&cert[..]).unwrap();
+            OwnedTrustAnchor::from_subject_spki_name_constraints(
+                ta.subject,
+                ta.spki,
+                ta.name_constraints,
+            )
+        });
+        root_cert_store.add_server_trust_anchors(trust_anchors);
+        let config = rustls::ClientConfig::builder()
+            .with_safe_defaults()
+            .with_root_certificates(root_cert_store)
+            .with_no_client_auth();
+        let connector = TlsConnector::from(Arc::new(config));
+
+        let domain = rustls::ServerName::try_from("galaxycup-test.com")
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid dnsname"))
+            .unwrap();
         // Try to connect to the peer.
         let (mut writer, mut reader) = match TcpStream::connect(self.address).await {
             Ok(stream) => {
                 let mut codec = LengthDelimitedCodec::new();
                 codec.set_max_frame_length(24 * 1024 * 1024);
+                let stream = connector.connect(domain, stream).await.unwrap();
                 Framed::new(stream, codec).split()
-            },
+            }
             Err(e) => {
                 warn!(
                     "{}",

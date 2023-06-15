@@ -3,20 +3,25 @@ use crate::error::NetworkError;
 use bytes::Bytes;
 use futures::sink::SinkExt as _;
 use futures::stream::StreamExt as _;
-use log::{debug};
+use log::debug;
 use rand::prelude::SliceRandom as _;
 use rand::rngs::SmallRng;
 use rand::SeedableRng as _;
 use std::cmp::min;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
+use std::fs::File;
+use std::io;
+use std::io::BufReader;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::oneshot;
 use tokio::time::{sleep, Duration};
+use tokio_rustls::rustls::{self, OwnedTrustAnchor};
+use tokio_rustls::{client::TlsStream, TlsConnector};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
-
 /// Convenient alias for cancel handlers returned to the caller task.
 pub type CancelHandler = oneshot::Receiver<Bytes>;
 
@@ -136,9 +141,31 @@ impl Connection {
     async fn run(&mut self) {
         let mut delay = self.retry_delay;
         let mut retry = 0;
+        let mut pem = BufReader::new(File::open("pems/ca.crt").unwrap());
+        let certs = rustls_pemfile::certs(&mut pem).unwrap();
+        let mut root_cert_store = rustls::RootCertStore::empty();
+        let trust_anchors = certs.iter().map(|cert| {
+            let ta = webpki::TrustAnchor::try_from_cert_der(&cert[..]).unwrap();
+            OwnedTrustAnchor::from_subject_spki_name_constraints(
+                ta.subject,
+                ta.spki,
+                ta.name_constraints,
+            )
+        });
+        root_cert_store.add_server_trust_anchors(trust_anchors);
+        let config = rustls::ClientConfig::builder()
+            .with_safe_defaults()
+            .with_root_certificates(root_cert_store)
+            .with_no_client_auth();
+        let connector = TlsConnector::from(Arc::new(config));
+
+        let domain = rustls::ServerName::try_from("galaxycup-test.com")
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid dnsname"))
+            .unwrap();
         loop {
             match TcpStream::connect(self.address).await {
                 Ok(stream) => {
+                    let stream = connector.connect(domain.clone(), stream).await.unwrap();
                     // info!("Outgoing connection established with {}", self.address);
 
                     // Reset the delay.
@@ -178,13 +205,13 @@ impl Connection {
     }
 
     /// Transmit messages once we have established a connection.
-    async fn keep_alive(&mut self, stream: TcpStream) -> NetworkError {
+    async fn keep_alive(&mut self, stream: TlsStream<TcpStream>) -> NetworkError {
         // This buffer keeps all messages and handlers that we have successfully transmitted but for
         // which we are still waiting to receive an ACK.
         let mut pending_replies = VecDeque::new();
         let mut codec = LengthDelimitedCodec::new();
         codec.set_max_frame_length(24 * 1024 * 1024);
-                
+
         let (mut writer, mut reader) = Framed::new(stream, codec).split();
         let error = 'connection: loop {
             // Try to send all messages of the buffer.

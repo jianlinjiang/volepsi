@@ -5,13 +5,31 @@ use bytes::Bytes;
 use futures::stream::SplitSink;
 use futures::stream::StreamExt as _;
 use log::{debug, warn};
+use rustls_pemfile::{certs, ec_private_keys};
 use std::error::Error;
+use std::fs::File;
+use std::io::{self, BufReader};
 use std::net::SocketAddr;
+use std::path::Path;
+use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
+use tokio_rustls::rustls::{self, Certificate, PrivateKey};
+use tokio_rustls::{server::TlsStream, TlsAcceptor};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
-
 /// Convenient alias for the writer end of the TCP channel.
-pub type Writer = SplitSink<Framed<TcpStream, LengthDelimitedCodec>, Bytes>;
+pub type Writer = SplitSink<Framed<TlsStream<TcpStream>, LengthDelimitedCodec>, Bytes>;
+
+pub fn load_certs(path: &Path) -> io::Result<Vec<Certificate>> {
+    certs(&mut BufReader::new(File::open(path)?))
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid cert"))
+        .map(|mut certs| certs.drain(..).map(Certificate).collect())
+}
+
+pub fn load_keys(path: &Path) -> io::Result<Vec<PrivateKey>> {
+    ec_private_keys(&mut BufReader::new(File::open(path)?))
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid key"))
+        .map(|mut keys| keys.drain(..).map(PrivateKey).collect())
+}
 
 #[async_trait]
 pub trait MessageHandler: Clone + Send + Sync + 'static {
@@ -44,7 +62,15 @@ impl<Handler: MessageHandler> Receiver<Handler> {
         let listener = TcpListener::bind(&self.address)
             .await
             .expect("Failed to bind TCP port");
-
+        let certs = load_certs(Path::new("pems/server.crt")).unwrap();
+        let mut keys = load_keys(Path::new("pems/server.key")).unwrap();
+        let config = rustls::ServerConfig::builder()
+            .with_safe_defaults()
+            .with_no_client_auth()
+            .with_single_cert(certs, keys.remove(0))
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))
+            .unwrap();
+        let acceptor = TlsAcceptor::from(Arc::new(config));
         debug!("Listening on {}", self.address);
         loop {
             let (socket, peer) = match listener.accept().await {
@@ -54,14 +80,17 @@ impl<Handler: MessageHandler> Receiver<Handler> {
                     continue;
                 }
             };
+            let acceptor = acceptor.clone();
+            let stream = acceptor.accept(socket).await.unwrap();
+            // let (io_stream, _connection) = stream.into_inner();
             // info!("Incoming connection established with {}", peer);
-            Self::spawn_runner(socket, peer, self.handler.clone()).await;
+            Self::spawn_runner(stream, peer, self.handler.clone()).await;
         }
     }
 
     /// Spawn a new runner to handle a specific TCP connection. It receives messages and process them
     /// using the provided handler.
-    async fn spawn_runner(socket: TcpStream, peer: SocketAddr, handler: Handler) {
+    async fn spawn_runner(socket: TlsStream<TcpStream>, peer: SocketAddr, handler: Handler) {
         tokio::spawn(async move {
             let mut codec = LengthDelimitedCodec::new();
             codec.set_max_frame_length(24 * 1024 * 1024);
@@ -71,12 +100,12 @@ impl<Handler: MessageHandler> Receiver<Handler> {
                 match frame.map_err(|e| NetworkError::FailedToReceiveMessage(peer, e)) {
                     Ok(message) => {
                         if let Err(e) = handler.dispatch(&mut writer, message.freeze()).await {
-                            warn!("{}", e);
+                            debug!("{}", e);
                             return;
                         }
                     }
                     Err(e) => {
-                        warn!("{}", e);
+                        debug!("{}", e);
                         return;
                     }
                 }
