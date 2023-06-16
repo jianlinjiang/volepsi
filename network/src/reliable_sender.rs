@@ -3,7 +3,7 @@ use crate::error::NetworkError;
 use bytes::Bytes;
 use futures::sink::SinkExt as _;
 use futures::stream::StreamExt as _;
-use log::debug;
+use log::error;
 use rand::prelude::SliceRandom as _;
 use rand::rngs::SmallRng;
 use rand::SeedableRng as _;
@@ -175,10 +175,10 @@ impl Connection {
                     // Try to transmit all messages in the buffer and keep transmitting incoming messages.
                     // The following function only returns if there is an error.
                     let error = self.keep_alive(stream).await;
-                    debug!("{}", error);
+                    error!("{}", error);
                 }
                 Err(e) => {
-                    debug!("{}", NetworkError::FailedToConnect(self.address, retry, e));
+                    error!("{}", NetworkError::FailedToConnect(self.address, retry, e));
                     let timer = sleep(Duration::from_millis(delay));
                     tokio::pin!(timer);
 

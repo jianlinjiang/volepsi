@@ -194,6 +194,7 @@ impl Sender {
         self.cross_sender.send(res).unwrap();
         info!("{}", self.channel_recv.recv().await.unwrap().len());
         // network send hashes
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
     }
 
     pub fn eval(&self, val: &[Block], output: &mut [Block]) {
